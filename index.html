@@ -302,7 +302,10 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
     </div>
     <div class="results-header">
       <div class="results-count">Showing <span id="result-count">0</span> accounts</div>
-      <div class="clear-btn" id="clear-filters">RESET</div>
+      <div style="display:flex;gap:6px">
+        <div class="clear-btn" onclick="openRulesPanel()">RULES</div>
+        <div class="clear-btn" id="clear-filters">RESET</div>
+      </div>
     </div>
     <div class="results-list" id="results-list"></div>
   </div>
@@ -363,6 +366,55 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
     <div class="edit-btns">
       <div class="edit-btn" onclick="closeAddModal()">Cancel</div>
       <div class="edit-btn save" onclick="saveNewAccount()">Add</div>
+    </div>
+  </div>
+</div>
+
+<!-- Rules Panel -->
+<div class="edit-modal-overlay" id="rules-panel">
+  <div class="edit-modal" style="max-width:520px;max-height:85vh;overflow-y:auto">
+    <h3>Rules &amp; Scoring</h3>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text);line-height:1.7">
+
+      <div style="color:var(--accent);font-size:9px;text-transform:uppercase;letter-spacing:2px;margin:12px 0 6px">Account Statuses</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--active-color)"></span> <strong>Active (Gold)</strong> &mdash; Has VJ revenue in the last 12 months.</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--lapsed-color)"></span> <strong>Lapsed (Red)</strong> &mdash; Salesforce Type = &ldquo;Active Customer&rdquo; but zero revenue last 12 months. CRM still considers them active, but they stopped buying.</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--dormant-color)"></span> <strong>Dormant (Pink)</strong> &mdash; Has VJ equipment in ERP but no orders last 12 months, and CRM types them as Prospect. They bought systems from us but fell off. Also includes accounts with revenue only 12-24 months ago.</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--a-color)"></span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--b-color)"></span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--c-color)"></span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--d-color)"></span> <strong>Prospect</strong> &mdash; No recent VJ revenue or equipment. Color = opportunity grade.</div>
+
+      <div style="color:var(--accent);font-size:9px;text-transform:uppercase;letter-spacing:2px;margin:16px 0 6px">Opportunity Grade (all accounts)</div>
+      <div style="margin-bottom:6px"><em>&ldquo;How likely does this site need marking/coding?&rdquo;</em></div>
+      <div style="margin-bottom:4px;color:var(--text-bright)">Core signals (~70%):</div>
+      <div style="padding-left:12px;margin-bottom:2px"><strong>Vertical fit</strong> (max 30) &mdash; Food/pharma/bev 28-30, pkg/chem 18-22, auto/aero 15, graphics 8</div>
+      <div style="padding-left:12px;margin-bottom:2px"><strong>Plant size</strong> (max 25) &mdash; 500+ emp=25, 200+=22, 100+=18, 50+=14, 20+=9</div>
+      <div style="padding-left:12px;margin-bottom:6px"><strong>Company revenue</strong> (max 15) &mdash; $1B+=15, $100M+=11, $10M+=8, $1M+=3</div>
+      <div style="margin-bottom:4px;color:var(--text-bright)">Bonus signals (no penalty for missing data):</div>
+      <div style="padding-left:12px;margin-bottom:2px"><strong>Competitive installs</strong> (max 10) &mdash; 10+=10, 5+=7, 1+=4</div>
+      <div style="padding-left:12px;margin-bottom:2px"><strong>VJ installed base</strong> (max 8) &mdash; 10+=8, 5+=5, 1+=3</div>
+      <div style="padding-left:12px;margin-bottom:2px"><strong>Current VJ revenue</strong> (max 6) &mdash; $100K+=6, $50K+=5, $10K+=3</div>
+      <div style="padding-left:12px;margin-bottom:6px"><strong>Upgrade readiness</strong> &mdash; 4pts if Y</div>
+      <div style="color:var(--text-dim)">Top 25% = A, next 25% = B, next 25% = C, bottom 25% = D</div>
+
+      <div style="color:var(--accent);font-size:9px;text-transform:uppercase;letter-spacing:2px;margin:16px 0 6px">Health Grade (active accounts only)</div>
+      <div style="margin-bottom:6px"><em>&ldquo;How strong is this customer relationship?&rdquo;</em></div>
+      <div style="padding-left:12px;margin-bottom:2px"><strong>Revenue size</strong> (max 25) &mdash; $200K+=25, $100K+=22, $50K+=18, $20K+=14, $5K+=8</div>
+      <div style="padding-left:12px;margin-bottom:2px"><strong>Revenue trend</strong> (max 15) &mdash; Rising=15, Unknown=7, Declining=0</div>
+      <div style="padding-left:12px;margin-bottom:2px"><strong>YOY change %</strong> (max 15) &mdash; +20%=15, stable=10, slight decline=5, major decline=0</div>
+      <div style="padding-left:12px;margin-bottom:2px"><strong>Tech breadth</strong> (max 15) &mdash; 4+ types=15, 3=12, 2=8, 1=4</div>
+      <div style="padding-left:12px;margin-bottom:2px"><strong>Service contract</strong> &mdash; 10pts if yes</div>
+      <div style="padding-left:12px;margin-bottom:2px"><strong>Upgrade readiness</strong> &mdash; 8pts if Y</div>
+      <div style="padding-left:12px;margin-bottom:2px"><strong>Break-fix activity</strong> &mdash; 7pts if any</div>
+      <div style="padding-left:12px;margin-bottom:6px"><strong>Production lines</strong> (max 10) &mdash; 20+=10, 10+=7, 5+=4, 1+=2</div>
+      <div style="color:var(--text-dim)">Graded among active accounts only. A = thriving, D = at-risk.</div>
+
+      <div style="color:var(--accent);font-size:9px;text-transform:uppercase;letter-spacing:2px;margin:16px 0 6px">Reading the two grades together</div>
+      <div style="padding-left:12px;margin-bottom:2px"><strong>Opp A + Health A</strong> &mdash; Strong account, protect it</div>
+      <div style="padding-left:12px;margin-bottom:2px"><strong>Opp A + Health D</strong> &mdash; Big site declining, needs attention</div>
+      <div style="padding-left:12px;margin-bottom:2px"><strong>Opp D + Health A</strong> &mdash; Small but loyal, low priority</div>
+      <div style="padding-left:12px;margin-bottom:2px"><strong>High Opp prospect</strong> &mdash; High-value site not buying from us yet</div>
+    </div>
+    <div class="edit-btns" style="margin-top:16px">
+      <div class="edit-btn" onclick="closeRulesPanel()">Close</div>
     </div>
   </div>
 </div>
@@ -774,6 +826,14 @@ window.saveNewAccount = function() {
 window.closeAddModal = function() {
   document.getElementById('add-modal').classList.remove('open');
   addingPin = false;
+};
+
+// ── Rules Panel ──
+window.openRulesPanel = function() {
+  document.getElementById('rules-panel').classList.add('open');
+};
+window.closeRulesPanel = function() {
+  document.getElementById('rules-panel').classList.remove('open');
 };
 
 // ── Export Edits ──

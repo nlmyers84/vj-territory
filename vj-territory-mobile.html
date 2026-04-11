@@ -280,6 +280,7 @@ html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); col
     <div class="sb-btn" onclick="openAddAccount()">+ Add Account</div>
     <div class="sb-btn" onclick="exportEdits()">Export Edits</div>
     <div class="sb-btn" onclick="resetFilters()">Reset Filters</div>
+    <div class="sb-btn" onclick="openRulesPanel()">Rules &amp; Scoring</div>
   </div>
 </div>
 
@@ -325,6 +326,41 @@ html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); col
     <div class="edit-btns">
       <div class="edit-btn" onclick="closeAddModal()">Cancel</div>
       <div class="edit-btn save" onclick="saveNewAccount()">Add</div>
+    </div>
+  </div>
+</div>
+
+<!-- Rules Panel -->
+<div class="edit-overlay" id="rules-panel">
+  <div class="edit-modal" style="max-height:85vh;overflow-y:auto">
+    <h3>Rules &amp; Scoring</h3>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text);line-height:1.6">
+
+      <div style="color:var(--accent);font-size:9px;text-transform:uppercase;letter-spacing:1.5px;margin:10px 0 5px">Statuses</div>
+      <div style="margin-bottom:3px"><span style="color:var(--active-color)">&#x25CF;</span> <strong>Active</strong> &mdash; VJ revenue last 12mo</div>
+      <div style="margin-bottom:3px"><span style="color:var(--lapsed-color)">&#x25CF;</span> <strong>Lapsed</strong> &mdash; CRM says Active Customer, but zero revenue last 12mo</div>
+      <div style="margin-bottom:3px"><span style="color:var(--dormant-color)">&#x25CF;</span> <strong>Dormant</strong> &mdash; Has VJ equipment but no orders last 12mo. CRM types as Prospect.</div>
+      <div style="margin-bottom:3px"><span style="color:var(--a-color)">&#x25CF;</span><span style="color:var(--b-color)">&#x25CF;</span><span style="color:var(--c-color)">&#x25CF;</span><span style="color:var(--d-color)">&#x25CF;</span> <strong>Prospect</strong> &mdash; No recent VJ revenue. Color = opp grade.</div>
+
+      <div style="color:var(--accent);font-size:9px;text-transform:uppercase;letter-spacing:1.5px;margin:12px 0 5px">Opportunity Grade</div>
+      <div style="margin-bottom:4px"><em>How likely do they need marking/coding?</em></div>
+      <div style="padding-left:8px;margin-bottom:2px"><strong>Vertical</strong> (30) &middot; <strong>Plant size</strong> (25) &middot; <strong>Co. revenue</strong> (15)</div>
+      <div style="padding-left:8px;margin-bottom:2px">Bonus: Comp installs (10) &middot; VJ base (8) &middot; Revenue (6) &middot; Upgrade (4)</div>
+      <div style="padding-left:8px;color:var(--text-dim)">Top 25%=A, next=B, next=C, bottom=D</div>
+
+      <div style="color:var(--accent);font-size:9px;text-transform:uppercase;letter-spacing:1.5px;margin:12px 0 5px">Health Grade (active only)</div>
+      <div style="margin-bottom:4px"><em>How strong is the relationship?</em></div>
+      <div style="padding-left:8px;margin-bottom:2px"><strong>Rev size</strong> (25) &middot; <strong>Trend</strong> (15) &middot; <strong>YOY %</strong> (15) &middot; <strong>Tech breadth</strong> (15)</div>
+      <div style="padding-left:8px;margin-bottom:2px">Contract (10) &middot; Upgrade (8) &middot; Break-fix (7) &middot; Prod lines (10)</div>
+      <div style="padding-left:8px;color:var(--text-dim)">A=thriving, D=at-risk</div>
+
+      <div style="color:var(--accent);font-size:9px;text-transform:uppercase;letter-spacing:1.5px;margin:12px 0 5px">Together</div>
+      <div style="padding-left:8px;margin-bottom:2px"><strong>Opp A + Health A</strong> &mdash; Protect</div>
+      <div style="padding-left:8px;margin-bottom:2px"><strong>Opp A + Health D</strong> &mdash; Needs attention</div>
+      <div style="padding-left:8px;margin-bottom:2px"><strong>Opp D + Health A</strong> &mdash; Loyal, low priority</div>
+    </div>
+    <div class="edit-btns" style="margin-top:12px">
+      <div class="edit-btn" onclick="closeRulesPanel()">Close</div>
     </div>
   </div>
 </div>
@@ -651,6 +687,9 @@ window.saveNewAccount = function() {
 };
 
 window.closeAddModal = function() { document.getElementById('add-modal').classList.remove('open'); addingPin = false; };
+
+window.openRulesPanel = function() { document.getElementById('rules-panel').classList.add('open'); };
+window.closeRulesPanel = function() { document.getElementById('rules-panel').classList.remove('open'); };
 
 window.exportEdits = function() {
   const edits = loadEdits();
