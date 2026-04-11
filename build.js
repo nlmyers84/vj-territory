@@ -1,0 +1,1774 @@
+#!/usr/bin/env node
+/**
+ * Build script: reads Full Accounts Data.xlsx + existing HTML RAW_DATA contacts,
+ * merges them, applies scoring/status rules, and generates both HTML map files.
+ */
+const fs = require('fs');
+const XLSX = require('xlsx');
+
+// ── 1. Extract existing contacts from current HTML RAW_DATA ──
+function extractExistingData(htmlPath) {
+  const html = fs.readFileSync(htmlPath, 'utf8');
+  const m = html.match(/const RAW_DATA\s*=\s*(\[[\s\S]*?\]);/);
+  if (!m) { console.warn('No RAW_DATA found in', htmlPath); return []; }
+  try { return JSON.parse(m[1]); } catch(e) { console.warn('Parse error', e.message); return []; }
+}
+
+const existingData = extractExistingData('index.html');
+// Build lookup: key = normalized(company + address) -> contacts array
+const existingContactsMap = {};
+existingData.forEach(d => {
+  const key = (d.company + '|' + (d.address || '')).toLowerCase().trim();
+  if (d.contacts && d.contacts.length > 0) {
+    existingContactsMap[key] = d.contacts;
+  }
+});
+console.log(`Extracted ${Object.keys(existingContactsMap).length} accounts with contacts from existing HTML`);
+
+// ── 2. Read Excel ──
+const wb = XLSX.readFile('Full Accounts Data.xlsx');
+const ws = wb.Sheets[wb.SheetNames[0]];
+const rows = XLSX.utils.sheet_to_json(ws);
+console.log(`Read ${rows.length} rows from Excel`);
+
+// ── 3. Excel date helper ──
+function excelDateToJS(serial) {
+  if (!serial || typeof serial !== 'number') return null;
+  // Excel epoch is 1900-01-01, but off by 1 due to Lotus 1-2-3 bug
+  return new Date((serial - 25569) * 86400 * 1000);
+}
+
+// ── 4. Filter & process ──
+const EXCLUDE_NAMES = ['U S POSTAL SERVICE', 'USPS', 'BLUECREST INC'];
+const VALID_STATES = ['KS', 'MO', 'KANSAS', 'MISSOURI'];
+
+function normalizeState(s) {
+  if (!s) return '';
+  const u = s.trim().toUpperCase();
+  if (u === 'KANSAS' || u === 'KS') return 'KS';
+  if (u === 'MISSOURI' || u === 'MO') return 'MO';
+  return u;
+}
+
+// Parse YOY trend from the HTML img tag
+function parseYOYTrend(val) {
+  if (!val || typeof val !== 'string') return 'unknown';
+  const v = val.toLowerCase();
+  if (v.includes('rising') || v.includes('green')) return 'Rising';
+  if (v.includes('declining') || v.includes('red')) return 'Declining';
+  if (v.includes('#error')) return 'unknown';
+  return 'unknown';
+}
+
+// Grade points for 80-20 segmentation / lead rating
+function letterPts(val) {
+  if (!val) return 0;
+  const u = String(val).toUpperCase().trim();
+  if (u === 'A') return 4;
+  if (u === 'B') return 3;
+  if (u === 'C') return 2;
+  if (u === 'D') return 1;
+  return 0;
+}
+
+// ── 5. Calculate custom score ──
+function calcScore(r) {
+  let pts = 0;
+
+  // 80-20 Segmentation
+  pts += letterPts(r['80-20 Segmentation']);
+
+  // Account Lead Rating (for prospects mainly, but include for all)
+  pts += letterPts(r['Account Lead Rating']);
+
+  // Rev All YOY Trend
+  const trend = parseYOYTrend(r['Rev (All) - YOY Trend']);
+  if (trend === 'Rising') pts += 3;
+  else if (trend === 'Declining') pts += 0;
+  else pts += 1; // unknown
+
+  // Upgrade Readiness
+  const ur = String(r['Upgrade Readiness'] || '').toUpperCase().trim();
+  if (ur === 'Y') pts += 3;
+
+  // Competitive CIJ
+  const compCIJ = Number(r['No of installed competitive CIJ Printers']) || 0;
+  if (compCIJ > 5) pts += 3;
+  else if (compCIJ >= 1) pts += 2;
+
+  // Competitive LASER
+  const compLaser = Number(r['No of installed competitive LASER']) || 0;
+  if (compLaser > 2) pts += 2;
+  else if (compLaser >= 1) pts += 1;
+
+  // Rev All 0-12 Month Rolling
+  const rev012 = Number(r['Rev (All) - 0-12 Month Rolling']) || 0;
+  if (rev012 > 100000) pts += 4;
+  else if (rev012 >= 50000) pts += 3;
+  else if (rev012 >= 10000) pts += 2;
+  else if (rev012 > 0) pts += 1;
+
+  return pts;
+}
+
+function scoreToGrade(score) {
+  if (score >= 15) return 'A';
+  if (score >= 10) return 'B';
+  if (score >= 5) return 'C';
+  return 'D';
+}
+
+// ── 6. Determine account status ──
+function getStatus(r) {
+  const type = String(r['Type'] || '').trim();
+  const rev012 = Number(r['Rev (All) - 0-12 Month Rolling']) || 0;
+  const lastActivity = excelDateToJS(r['Last Activity']);
+  const now = new Date();
+  const twoYearsAgo = new Date(now.getFullYear() - 2, now.getMonth(), now.getDate());
+
+  if (type === 'Active Customer') {
+    if (rev012 > 0) return 'active';
+    // Zero revenue last 12 months — check if lapsed
+    if (lastActivity && lastActivity < twoYearsAgo) return 'lapsed';
+    return 'active'; // still active if recent activity
+  }
+  return 'prospect';
+}
+
+// ── 7. City-level coordinate averages for fallback ──
+const cityCoords = {};
+rows.forEach(r => {
+  const lat = Number(r['Latitude (MA Shipping)']);
+  const lng = Number(r['Longitude (MA Shipping)']);
+  if (lat && lng && !isNaN(lat) && !isNaN(lng)) {
+    const city = (r['Shipping City'] || '').trim().toLowerCase();
+    const state = normalizeState(r['Shipping State/Province']);
+    const key = city + '|' + state;
+    if (!cityCoords[key]) cityCoords[key] = { sumLat: 0, sumLng: 0, count: 0 };
+    cityCoords[key].sumLat += lat;
+    cityCoords[key].sumLng += lng;
+    cityCoords[key].count++;
+  }
+});
+
+function getCityAvgCoords(city, state) {
+  const key = (city || '').trim().toLowerCase() + '|' + state;
+  const c = cityCoords[key];
+  if (c && c.count > 0) return { lat: c.sumLat / c.count, lng: c.sumLng / c.count };
+  return null;
+}
+
+// ── 8. Process all rows ──
+const accounts = [];
+const seenKeys = new Set();
+
+rows.forEach(r => {
+  const name = (r['Account Name'] || '').trim();
+  if (!name) return;
+
+  // Exclude USPS / Bluecrest
+  const nameUpper = name.toUpperCase();
+  if (EXCLUDE_NAMES.some(ex => nameUpper.includes(ex))) return;
+
+  // Filter to KS/MO only
+  const state = normalizeState(r['Shipping State/Province']);
+  if (state !== 'KS' && state !== 'MO') return;
+
+  // Coordinates
+  let lat = Number(r['Latitude (MA Shipping)']) || 0;
+  let lng = Number(r['Longitude (MA Shipping)']) || 0;
+
+  if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
+    const fallback = getCityAvgCoords(r['Shipping City'], state);
+    if (fallback) {
+      lat = fallback.lat;
+      lng = fallback.lng;
+    } else {
+      return; // skip accounts with no coords and no fallback
+    }
+  }
+
+  // Dedup key: Account Name + Shipping Address
+  const addr = (r['Shipping Address Line 1'] || '').trim();
+  const dedupKey = (name + '|' + addr).toLowerCase();
+  if (seenKeys.has(dedupKey)) return;
+  seenKeys.add(dedupKey);
+
+  const status = getStatus(r);
+  const score = calcScore(r);
+  const grade = scoreToGrade(score);
+  const rev012 = Number(r['Rev (All) - 0-12 Month Rolling']) || 0;
+  const rev1224 = Number(r['Rev (All) - 12-24 Month Rolling']) || 0;
+  const trend = parseYOYTrend(r['Rev (All) - YOY Trend']);
+  const upgradeReady = String(r['Upgrade Readiness'] || 'N').toUpperCase().trim() === 'Y';
+  const compCIJ = Number(r['No of installed competitive CIJ Printers']) || 0;
+  const compLaser = Number(r['No of installed competitive LASER']) || 0;
+  const prodLines = Number(r['Total Number of Active Printers(VJDB)']) || Number(r['Total Number of Active Printers_CR']) || 0;
+  const city = (r['Shipping City'] || '').trim();
+  const vertical = (r['Vertical'] || r['Industry'] || 'Other / Unknown').trim();
+
+  // Contacts: merge existing + equipment contact from Excel
+  const existKey = (name + '|' + addr).toLowerCase();
+  let contacts = [];
+
+  // Keep existing contacts (up to 5)
+  if (existingContactsMap[existKey]) {
+    contacts = existingContactsMap[existKey].slice(0, 5);
+  }
+
+  // Add Equipment Contact from Excel
+  const eqName = (r['Equipment Contact'] || '').trim();
+  if (eqName) {
+    contacts.push({
+      name: eqName,
+      title: 'Equipment Contact',
+      phone: (r['Equipment Contact Phone'] || '').trim(),
+      email: (r['Equipment Contact Email'] || '').trim(),
+      mobile: '',
+      fit: '',
+      dm: false
+    });
+  }
+
+  // Opportunity notes
+  const openOpps = Number(r['# of Open Opportunities']) || 0;
+  const funnelVal = Number(r['Total Funnel Value (LC)']) || 0;
+  let oppNote = '';
+  if (openOpps > 0) oppNote = `${openOpps} open opportunit${openOpps === 1 ? 'y' : 'ies'}`;
+  if (funnelVal > 0) oppNote += (oppNote ? ' | ' : '') + `Funnel: $${Math.round(funnelVal).toLocaleString()}`;
+
+  accounts.push({
+    company: name,
+    address: addr,
+    city,
+    state,
+    vertical,
+    lat: Math.round(lat * 10000) / 10000,
+    lng: Math.round(lng * 10000) / 10000,
+    status, // 'active', 'lapsed', 'prospect'
+    grade,
+    score,
+    rev012: Math.round(rev012),
+    rev1224: Math.round(rev1224),
+    trend,
+    upgradeReady,
+    compCIJ,
+    compLaser,
+    prodLines,
+    oppNote,
+    contacts
+  });
+});
+
+console.log(`Processed ${accounts.length} accounts (after filtering)`);
+console.log(`  Active: ${accounts.filter(a=>a.status==='active').length}`);
+console.log(`  Lapsed: ${accounts.filter(a=>a.status==='lapsed').length}`);
+console.log(`  Prospect: ${accounts.filter(a=>a.status==='prospect').length}`);
+console.log(`  A-grade: ${accounts.filter(a=>a.grade==='A').length}`);
+console.log(`  B-grade: ${accounts.filter(a=>a.grade==='B').length}`);
+console.log(`  C-grade: ${accounts.filter(a=>a.grade==='C').length}`);
+console.log(`  D-grade: ${accounts.filter(a=>a.grade==='D').length}`);
+
+// Sort: active first, then lapsed, then by grade
+accounts.sort((a, b) => {
+  const statusOrder = { active: 0, lapsed: 1, prospect: 2 };
+  const gradeOrder = { A: 0, B: 1, C: 2, D: 3 };
+  if (statusOrder[a.status] !== statusOrder[b.status]) return statusOrder[a.status] - statusOrder[b.status];
+  if (gradeOrder[a.grade] !== gradeOrder[b.grade]) return gradeOrder[a.grade] - gradeOrder[b.grade];
+  return a.company.localeCompare(b.company);
+});
+
+const RAW_DATA_JSON = JSON.stringify(accounts);
+
+// ── 9. Generate HTML files ──
+
+function getVerticals(data) {
+  const verts = {};
+  data.forEach(d => { verts[d.vertical] = (verts[d.vertical]||0)+1; });
+  return Object.entries(verts).sort((a,b) => b[1]-a[1]).slice(0, 15).map(v => v[0]);
+}
+
+const topVerticals = getVerticals(accounts);
+
+// ── DESKTOP HTML ──
+const desktopHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Videojet Territory Intelligence Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"><\/script>
+<style>
+:root {
+  --bg: #0a0e14;
+  --surface: #111820;
+  --surface2: #161e28;
+  --border: #1e2d3d;
+  --border2: #243344;
+  --accent: #00d4ff;
+  --accent2: #0099cc;
+  --text: #c8d8e8;
+  --text-dim: #5a7a94;
+  --text-bright: #e8f4ff;
+  --active-color: #FFD700;
+  --active-glow: rgba(255,215,0,0.4);
+  --lapsed-color: #FF6B35;
+  --lapsed-glow: rgba(255,107,53,0.5);
+  --a-color: #2ECC71;
+  --a-glow: rgba(46,204,113,0.35);
+  --b-color: #3498DB;
+  --b-glow: rgba(52,152,219,0.35);
+  --c-color: #FF8C00;
+  --c-glow: rgba(255,140,0,0.35);
+  --d-color: #95A5A6;
+  --d-glow: rgba(149,165,166,0.35);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'IBM Plex Sans',sans-serif; background:var(--bg); color:var(--text); height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+
+/* HEADER */
+header { background:var(--surface); border-bottom:1px solid var(--border); padding:0 20px; height:56px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0; position:relative; z-index:1000; }
+header::after { content:''; position:absolute; bottom:0; left:0; right:0; height:1px; background:linear-gradient(90deg,transparent,var(--accent),transparent); opacity:0.4; }
+.logo { font-family:'Rajdhani',sans-serif; font-size:20px; font-weight:700; letter-spacing:3px; color:var(--text-bright); text-transform:uppercase; display:flex; align-items:center; gap:10px; }
+.logo-dot { width:8px; height:8px; background:var(--accent); border-radius:50%; box-shadow:0 0 12px var(--accent); animation:pulse 2s ease-in-out infinite; }
+@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.7)} }
+.header-stats { display:flex; gap:24px; font-family:'IBM Plex Mono',monospace; font-size:11px; }
+.stat { display:flex; flex-direction:column; align-items:center; gap:2px; }
+.stat-value { font-size:16px; font-weight:500; color:var(--accent); }
+.stat-label { color:var(--text-dim); text-transform:uppercase; letter-spacing:1px; }
+.header-actions { display:flex; gap:8px; }
+.hdr-btn { padding:6px 12px; border-radius:4px; font-family:'IBM Plex Mono',monospace; font-size:10px; cursor:pointer; border:1px solid var(--border2); background:var(--surface2); color:var(--text-dim); transition:all 0.15s; text-transform:uppercase; letter-spacing:0.5px; }
+.hdr-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+/* LAYOUT */
+.main { display:flex; flex:1; overflow:hidden; }
+
+/* SIDEBAR */
+.sidebar { width:300px; background:var(--surface); border-right:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; overflow:hidden; }
+.sidebar-section { padding:14px 16px; border-bottom:1px solid var(--border); }
+.section-label { font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:2px; color:var(--text-dim); margin-bottom:10px; }
+.search-wrap { position:relative; }
+.search-wrap input { width:100%; background:var(--bg); border:1px solid var(--border2); border-radius:4px; color:var(--text-bright); padding:8px 12px 8px 32px; font-family:'IBM Plex Sans',sans-serif; font-size:13px; outline:none; transition:border-color 0.2s; }
+.search-wrap input:focus { border-color:var(--accent); }
+.search-wrap input::placeholder { color:var(--text-dim); }
+.search-icon { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--text-dim); font-size:14px; pointer-events:none; }
+.filter-group { margin-bottom:12px; }
+.filter-label { font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:1px; margin-bottom:6px; display:block; }
+.filter-pills { display:flex; flex-wrap:wrap; gap:5px; }
+.pill { padding:4px 10px; border-radius:3px; font-size:11px; font-family:'IBM Plex Mono',monospace; cursor:pointer; border:1px solid var(--border2); background:var(--bg); color:var(--text-dim); transition:all 0.15s; user-select:none; letter-spacing:0.5px; }
+.pill:hover { border-color:var(--accent); color:var(--text); }
+.pill.active { background:var(--accent); border-color:var(--accent); color:#000; font-weight:600; }
+.pill.grade-a.active { background:var(--a-color); border-color:var(--a-color); }
+.pill.grade-b.active { background:var(--b-color); border-color:var(--b-color); }
+.pill.grade-c.active { background:var(--c-color); border-color:var(--c-color); }
+.pill.status-active.active { background:var(--active-color); border-color:var(--active-color); }
+.pill.status-lapsed.active { background:var(--lapsed-color); border-color:var(--lapsed-color); }
+.results-header { display:flex; align-items:center; justify-content:space-between; padding:10px 16px 8px; border-bottom:1px solid var(--border); }
+.results-count { font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--text-dim); }
+.results-count span { color:var(--accent); font-weight:500; }
+.clear-btn { font-size:10px; color:var(--text-dim); cursor:pointer; text-transform:uppercase; letter-spacing:1px; padding:2px 6px; border:1px solid var(--border2); border-radius:3px; transition:all 0.15s; }
+.clear-btn:hover { color:var(--accent); border-color:var(--accent); }
+.results-list { flex:1; overflow-y:auto; padding:4px 0; }
+.results-list::-webkit-scrollbar { width:4px; }
+.results-list::-webkit-scrollbar-track { background:transparent; }
+.results-list::-webkit-scrollbar-thumb { background:var(--border2); border-radius:2px; }
+.result-item { padding:9px 16px; cursor:pointer; border-bottom:1px solid var(--border); transition:background 0.1s; position:relative; }
+.result-item:hover { background:var(--surface2); }
+.result-item.selected { background:rgba(0,212,255,0.06); }
+.result-item::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; }
+.result-item.status-active::before { background:var(--active-color); }
+.result-item.status-lapsed::before { background:var(--lapsed-color); }
+.result-item.grade-A.status-prospect::before { background:var(--a-color); }
+.result-item.grade-B.status-prospect::before { background:var(--b-color); }
+.result-item.grade-C.status-prospect::before { background:var(--c-color); }
+.result-item.grade-D.status-prospect::before { background:var(--d-color); }
+.result-company { font-size:12px; font-weight:500; color:var(--text-bright); line-height:1.3; margin-bottom:3px; }
+.result-meta { display:flex; align-items:center; gap:8px; font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--text-dim); }
+.result-grade { font-weight:600; padding:1px 5px; border-radius:2px; font-size:10px; }
+.result-grade.A { background:rgba(46,204,113,0.15); color:var(--a-color); }
+.result-grade.B { background:rgba(52,152,219,0.15); color:var(--b-color); }
+.result-grade.C { background:rgba(255,140,0,0.15); color:var(--c-color); }
+.result-grade.D { background:rgba(149,165,166,0.15); color:var(--d-color); }
+.result-status-badge { padding:1px 5px; border-radius:2px; font-size:9px; font-weight:600; letter-spacing:0.5px; }
+.result-status-badge.active { background:rgba(255,215,0,0.15); color:var(--active-color); }
+.result-status-badge.lapsed { background:rgba(255,107,53,0.15); color:var(--lapsed-color); }
+.result-star { color:#FFD700; margin-right:4px; }
+.result-ring { color:#FF4444; margin-right:4px; font-size:8px; }
+
+/* MAP */
+#map { flex:1; position:relative; }
+.leaflet-tile { filter:none; }
+.leaflet-control-zoom a { background:var(--surface)!important; color:var(--text)!important; border-color:var(--border)!important; }
+.leaflet-control-zoom a:hover { background:var(--surface2)!important; color:var(--accent)!important; }
+.leaflet-control-attribution { display:none; }
+
+/* Markers */
+.map-marker { width:14px; height:14px; border-radius:50%; border:2px solid rgba(255,255,255,0.3); cursor:pointer; transition:transform 0.15s; position:relative; }
+.map-marker:hover { transform:scale(1.5); z-index:999!important; }
+.map-marker.status-active { background:var(--active-color); box-shadow:0 0 10px var(--active-glow); border:2px solid rgba(255,215,0,0.6); }
+.map-marker.status-lapsed { background:var(--lapsed-color); box-shadow:0 0 12px var(--lapsed-glow); border:2px solid rgba(255,107,53,0.7); }
+.map-marker.grade-A { background:var(--a-color); box-shadow:0 0 8px var(--a-glow); }
+.map-marker.grade-B { background:var(--b-color); box-shadow:0 0 8px var(--b-glow); }
+.map-marker.grade-C { background:var(--c-color); box-shadow:0 0 8px var(--c-glow); }
+.map-marker.grade-D { background:var(--d-color); box-shadow:0 0 6px var(--d-glow); }
+.map-marker.selected { transform:scale(1.6); z-index:999!important; border:2px solid white; }
+.map-marker .star-overlay { position:absolute; top:-8px; right:-8px; font-size:10px; pointer-events:none; }
+.map-marker .ring-overlay { position:absolute; top:-2px; left:-2px; right:-2px; bottom:-2px; border-radius:50%; border:2px solid #FF4444; pointer-events:none; animation:ringPulse 1.5s infinite; }
+@keyframes ringPulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+/* Cluster */
+.my-cluster { border-radius:50%; background:rgba(17,24,32,0.92); border:2px solid #243344; display:flex; align-items:center; justify-content:center; font-family:'IBM Plex Mono',monospace; font-weight:600; color:#e8f4ff; box-shadow:0 2px 10px rgba(0,0,0,0.5); cursor:pointer; }
+
+/* Popup */
+.leaflet-popup-content-wrapper { background:var(--surface)!important; border:1px solid var(--border2)!important; border-radius:6px!important; box-shadow:0 8px 32px rgba(0,0,0,0.6)!important; padding:0!important; }
+.leaflet-popup-tip { background:var(--surface)!important; }
+.leaflet-popup-close-button { color:var(--text-dim)!important; font-size:18px!important; padding:6px 10px!important; }
+.leaflet-popup-close-button:hover { color:var(--text-bright)!important; }
+.leaflet-popup-content { margin:0!important; padding:0!important; width:auto!important; }
+.popup-inner { padding:14px 16px; min-width:260px; max-width:340px; }
+.popup-company { font-family:'Rajdhani',sans-serif; font-size:15px; font-weight:600; color:var(--text-bright); margin-bottom:8px; line-height:1.2; letter-spacing:0.5px; }
+.popup-row { display:flex; align-items:center; gap:8px; font-size:11px; color:var(--text-dim); margin-bottom:4px; font-family:'IBM Plex Mono',monospace; }
+.popup-row strong { color:var(--text); font-weight:500; }
+.popup-badges { display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; }
+.badge { padding:3px 8px; border-radius:3px; font-size:10px; font-family:'IBM Plex Mono',monospace; font-weight:600; letter-spacing:0.5px; }
+.badge-a { background:rgba(46,204,113,0.15); color:var(--a-color); border:1px solid rgba(46,204,113,0.3); }
+.badge-b { background:rgba(52,152,219,0.15); color:var(--b-color); border:1px solid rgba(52,152,219,0.3); }
+.badge-c { background:rgba(255,140,0,0.15); color:var(--c-color); border:1px solid rgba(255,140,0,0.3); }
+.badge-d { background:rgba(149,165,166,0.15); color:var(--d-color); border:1px solid rgba(149,165,166,0.3); }
+.badge-active { background:rgba(255,215,0,0.15); color:var(--active-color); border:1px solid rgba(255,215,0,0.3); }
+.badge-lapsed { background:rgba(255,107,53,0.15); color:var(--lapsed-color); border:1px solid rgba(255,107,53,0.3); }
+.badge-vert { background:rgba(0,212,255,0.08); color:var(--accent); border:1px solid rgba(0,212,255,0.2); }
+.popup-details { margin-top:8px; padding-top:8px; border-top:1px solid var(--border); font-family:'IBM Plex Mono',monospace; font-size:10px; }
+.popup-detail-row { display:flex; justify-content:space-between; margin-bottom:3px; color:var(--text-dim); }
+.popup-detail-row .val { color:var(--text); font-weight:500; }
+.popup-detail-row .val.green { color:var(--a-color); }
+.popup-detail-row .val.red { color:#FF6B6B; }
+.popup-note { margin-top:6px; padding:6px 8px; background:rgba(0,212,255,0.05); border:1px solid var(--border); border-radius:3px; font-size:10px; color:var(--text); font-family:'IBM Plex Mono',monospace; }
+.popup-actions { margin-top:10px; display:flex; gap:6px; flex-wrap:wrap; }
+.popup-btn { display:inline-flex; align-items:center; gap:5px; padding:6px 10px; border-radius:4px; cursor:pointer; font-family:'IBM Plex Mono',monospace; font-size:10px; font-weight:600; border:1px solid var(--border2); color:var(--text-dim); background:var(--bg); transition:all 0.15s; }
+.popup-btn:hover { border-color:var(--accent); color:var(--accent); }
+.popup-btn.primary { border-color:var(--accent); color:var(--accent); background:rgba(0,212,255,0.08); }
+
+/* Contacts panel */
+.contacts-panel { position:absolute; top:0; right:0; bottom:0; width:380px; background:var(--surface); border-left:1px solid var(--border2); z-index:2000; display:flex; flex-direction:column; transform:translateX(100%); transition:transform 0.25s ease; box-shadow:-8px 0 32px rgba(0,0,0,0.4); }
+.contacts-panel.open { transform:translateX(0); }
+.cp-header { padding:16px 18px; border-bottom:1px solid var(--border); display:flex; align-items:flex-start; justify-content:space-between; flex-shrink:0; }
+.cp-company { font-family:'Rajdhani',sans-serif; font-size:15px; font-weight:600; color:var(--text-bright); letter-spacing:0.5px; line-height:1.2; flex:1; padding-right:12px; }
+.cp-close { color:var(--text-dim); cursor:pointer; font-size:20px; line-height:1; flex-shrink:0; transition:color 0.15s; }
+.cp-close:hover { color:var(--text-bright); }
+.cp-list { flex:1; overflow-y:auto; padding:8px 0; }
+.cp-list::-webkit-scrollbar { width:4px; }
+.cp-list::-webkit-scrollbar-thumb { background:var(--border2); border-radius:2px; }
+.cp-contact { padding:10px 18px; border-bottom:1px solid var(--border); position:relative; }
+.cp-contact::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; }
+.cp-contact.equip::before { background:var(--accent); }
+.cp-contact.fit-A::before { background:var(--a-color); }
+.cp-contact.fit-B::before { background:var(--b-color); }
+.cp-contact.fit-other::before { background:var(--text-dim); opacity:0.4; }
+.cp-name { font-size:13px; font-weight:600; color:var(--text-bright); margin-bottom:2px; display:flex; align-items:center; gap:7px; }
+.cp-dm-badge { font-family:'IBM Plex Mono',monospace; font-size:8px; font-weight:700; padding:1px 5px; border-radius:2px; letter-spacing:0.5px; background:rgba(255,215,0,0.15); color:var(--active-color); border:1px solid rgba(255,215,0,0.3); }
+.cp-equip-badge { font-family:'IBM Plex Mono',monospace; font-size:8px; font-weight:700; padding:1px 5px; border-radius:2px; letter-spacing:0.5px; background:rgba(0,212,255,0.15); color:var(--accent); border:1px solid rgba(0,212,255,0.3); }
+.cp-title { font-size:11px; color:var(--text); margin-bottom:4px; }
+.cp-phone-row { font-size:11px; margin-top:2px; display:flex; align-items:center; gap:5px; }
+.cp-phone { font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--accent); text-decoration:none; }
+.cp-phone:hover { text-decoration:underline; }
+.cp-email { font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--accent); text-decoration:none; }
+.cp-email:hover { text-decoration:underline; }
+.cp-nophone { font-size:10px; color:var(--text-dim); font-style:italic; margin-top:3px; font-family:'IBM Plex Mono',monospace; }
+.cp-empty { padding:24px 18px; color:var(--text-dim); font-family:'IBM Plex Mono',monospace; font-size:11px; text-align:center; }
+
+/* Edit modal */
+.edit-modal-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:3000; display:none; align-items:center; justify-content:center; }
+.edit-modal-overlay.open { display:flex; }
+.edit-modal { background:var(--surface); border:1px solid var(--border2); border-radius:8px; padding:20px; min-width:320px; max-width:400px; box-shadow:0 16px 48px rgba(0,0,0,0.5); }
+.edit-modal h3 { font-family:'Rajdhani',sans-serif; font-size:16px; color:var(--text-bright); margin-bottom:14px; }
+.edit-row { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+.edit-row label { font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--text-dim); min-width:80px; }
+.edit-row select, .edit-row input, .edit-row textarea { background:var(--bg); border:1px solid var(--border2); border-radius:4px; color:var(--text-bright); padding:6px 10px; font-family:'IBM Plex Sans',sans-serif; font-size:12px; outline:none; flex:1; }
+.edit-row textarea { resize:vertical; min-height:60px; }
+.edit-row select:focus, .edit-row input:focus, .edit-row textarea:focus { border-color:var(--accent); }
+.edit-btns { display:flex; gap:8px; margin-top:14px; justify-content:flex-end; }
+.edit-btn { padding:7px 14px; border-radius:4px; font-family:'IBM Plex Mono',monospace; font-size:11px; cursor:pointer; border:1px solid var(--border2); background:var(--bg); color:var(--text-dim); transition:all 0.15s; }
+.edit-btn:hover { border-color:var(--accent); color:var(--accent); }
+.edit-btn.save { border-color:var(--a-color); color:var(--a-color); background:rgba(46,204,113,0.08); }
+.edit-btn.danger { border-color:#FF6B6B; color:#FF6B6B; }
+.edit-btn.danger:hover { background:rgba(255,107,107,0.1); }
+
+/* Add Account modal */
+.add-modal-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:3000; display:none; align-items:center; justify-content:center; }
+.add-modal-overlay.open { display:flex; }
+
+/* Legend */
+.map-legend { position:absolute; bottom:24px; right:16px; background:var(--surface); border:1px solid var(--border2); border-radius:6px; padding:12px 14px; z-index:1000; min-width:180px; }
+.legend-title { font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:2px; color:var(--text-dim); margin-bottom:10px; }
+.legend-item { display:flex; align-items:center; gap:8px; margin-bottom:7px; font-size:11px; color:var(--text); }
+.legend-dot { width:11px; height:11px; border-radius:50%; flex-shrink:0; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo"><div class="logo-dot"></div>VIDEOJET TERRITORY INTEL</div>
+  <div class="header-stats">
+    <div class="stat"><div class="stat-value" id="hdr-total" style="color:var(--text-bright)">0</div><div class="stat-label">Accounts</div></div>
+    <div class="stat"><div class="stat-value" id="hdr-active" style="color:var(--active-color)">0</div><div class="stat-label">Active</div></div>
+    <div class="stat"><div class="stat-value" id="hdr-lapsed" style="color:var(--lapsed-color)">0</div><div class="stat-label">Lapsed</div></div>
+    <div class="stat"><div class="stat-value" id="hdr-prospect" style="color:var(--accent)">0</div><div class="stat-label">Prospects</div></div>
+  </div>
+  <div class="header-actions">
+    <div class="hdr-btn" onclick="openAddAccount()">+ Add Account</div>
+    <div class="hdr-btn" onclick="exportEdits()">Export Edits</div>
+  </div>
+</header>
+
+<div class="main">
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <div class="section-label">Search</div>
+      <div class="search-wrap">
+        <span class="search-icon">&#x2315;</span>
+        <input type="text" id="search" placeholder="Company, city, vertical...">
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-label">Filters</div>
+      <div class="filter-group">
+        <span class="filter-label">State</span>
+        <div class="filter-pills" id="state-filter">
+          <div class="pill active" data-val="ALL">All</div>
+          <div class="pill" data-val="MO">MO</div>
+          <div class="pill" data-val="KS">KS</div>
+        </div>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Grade</span>
+        <div class="filter-pills" id="grade-filter">
+          <div class="pill active" data-val="ALL">All</div>
+          <div class="pill grade-a" data-val="A">A</div>
+          <div class="pill grade-b" data-val="B">B</div>
+          <div class="pill grade-c" data-val="C">C</div>
+          <div class="pill" data-val="D">D</div>
+        </div>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Status</span>
+        <div class="filter-pills" id="status-filter">
+          <div class="pill active" data-val="ALL">All</div>
+          <div class="pill status-active" data-val="active">Active</div>
+          <div class="pill status-lapsed" data-val="lapsed">Lapsed</div>
+          <div class="pill" data-val="prospect">Prospect</div>
+        </div>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Vertical</span>
+        <div class="filter-pills" id="vert-filter">
+          <div class="pill active" data-val="ALL">All</div>
+          <div class="pill" data-val="Food">Food & Bev</div>
+          <div class="pill" data-val="Pharma">Pharma</div>
+          <div class="pill" data-val="Packaging">Packaging</div>
+          <div class="pill" data-val="Automotive">Auto</div>
+          <div class="pill" data-val="Plastics">Plastics</div>
+          <div class="pill" data-val="Consumer">CPG</div>
+          <div class="pill" data-val="Beverage">Beverage</div>
+        </div>
+      </div>
+    </div>
+    <div class="results-header">
+      <div class="results-count">Showing <span id="result-count">0</span> accounts</div>
+      <div class="clear-btn" id="clear-filters">RESET</div>
+    </div>
+    <div class="results-list" id="results-list"></div>
+  </div>
+
+  <div id="map">
+    <div class="contacts-panel" id="contacts-panel">
+      <div class="cp-header">
+        <div class="cp-company" id="cp-company-name"></div>
+        <div class="cp-close" onclick="closeContacts()">&#x2715;</div>
+      </div>
+      <div class="cp-list" id="cp-contact-list"></div>
+    </div>
+    <div class="map-legend">
+      <div class="legend-title">Legend</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--active-color);box-shadow:0 0 6px var(--active-glow)"></div> Active Customer</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--lapsed-color);box-shadow:0 0 6px var(--lapsed-glow)"></div> Lapsed Customer</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--a-color);box-shadow:0 0 6px var(--a-glow)"></div> A-Grade Prospect</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--b-color);box-shadow:0 0 6px var(--b-glow)"></div> B-Grade Prospect</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--c-color);box-shadow:0 0 6px var(--c-glow)"></div> C-Grade Prospect</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--d-color);box-shadow:0 0 6px var(--d-glow)"></div> D-Grade Prospect</div>
+      <div class="legend-item" style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px"><span style="font-size:12px">&#x2B50;</span> Starred Account</div>
+      <div class="legend-item"><div style="width:11px;height:11px;border-radius:50%;border:2px solid #FF4444"></div> Active Trial/Opp</div>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="edit-modal-overlay" id="edit-modal">
+  <div class="edit-modal">
+    <h3 id="edit-modal-title">Edit Account</h3>
+    <div class="edit-row"><label>Star</label><select id="edit-star"><option value="0">No</option><option value="1">&#x2B50; Yes</option></select></div>
+    <div class="edit-row"><label>Trial/Opp</label><select id="edit-ring"><option value="0">No</option><option value="1">&#x1F534; Active Trial</option></select></div>
+    <div class="edit-row"><label>Grade</label><select id="edit-grade"><option value="">Auto</option><option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option></select></div>
+    <div class="edit-row"><label>Status</label><select id="edit-status"><option value="">Auto</option><option value="active">Active Customer</option><option value="lapsed">Lapsed Customer</option><option value="prospect">Prospect</option></select></div>
+    <div class="edit-row"><label>Note</label><textarea id="edit-note" placeholder="Add a note..."></textarea></div>
+    <div class="edit-btns">
+      <div class="edit-btn danger" id="edit-delete-btn">Delete</div>
+      <div class="edit-btn" onclick="closeEditModal()">Cancel</div>
+      <div class="edit-btn save" onclick="saveEdit()">Save</div>
+    </div>
+  </div>
+</div>
+
+<!-- Add Account Modal -->
+<div class="add-modal-overlay" id="add-modal">
+  <div class="edit-modal">
+    <h3>Add Account</h3>
+    <div class="edit-row"><label>Name</label><input id="add-name" type="text" placeholder="Company name"></div>
+    <div class="edit-row"><label>Address</label><input id="add-address" type="text" placeholder="Street address"></div>
+    <div class="edit-row"><label>City</label><input id="add-city" type="text" placeholder="City"></div>
+    <div class="edit-row"><label>State</label><select id="add-state"><option value="KS">KS</option><option value="MO">MO</option></select></div>
+    <div class="edit-row"><label>Grade</label><select id="add-grade"><option value="C">C</option><option value="A">A</option><option value="B">B</option><option value="D">D</option></select></div>
+    <div class="edit-row"><label>Note</label><textarea id="add-note" placeholder="Note..."></textarea></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-dim);margin-bottom:10px;">Click on the map to set the pin location, or enter coords:</div>
+    <div class="edit-row"><label>Lat</label><input id="add-lat" type="number" step="0.0001" placeholder="38.0000"></div>
+    <div class="edit-row"><label>Lng</label><input id="add-lng" type="number" step="0.0001" placeholder="-96.0000"></div>
+    <div class="edit-btns">
+      <div class="edit-btn" onclick="closeAddModal()">Cancel</div>
+      <div class="edit-btn save" onclick="saveNewAccount()">Add</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const RAW_DATA = ${RAW_DATA_JSON};
+
+document.addEventListener("DOMContentLoaded", function() {
+
+// ── LocalStorage edits ──
+const LS_KEY = 'vj_territory_edits';
+function loadEdits() { try { return JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch(e) { return {}; } }
+function saveEdits(edits) { localStorage.setItem(LS_KEY, JSON.stringify(edits)); }
+function getEditKey(d) { return (d.company + '|' + (d.address || '')).toLowerCase(); }
+
+// Apply edits to data
+function getEffective(d, idx) {
+  const edits = loadEdits();
+  const key = getEditKey(d);
+  const e = edits[key] || {};
+  return {
+    ...d,
+    grade: e.grade || d.grade,
+    status: e.status || d.status,
+    star: !!e.star,
+    ring: !!e.ring,
+    note: e.note || '',
+    deleted: !!e.deleted
+  };
+}
+
+// ── State ──
+let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', search:'' };
+let markers = [];
+let selectedIdx = null;
+
+// ── Map init ──
+const map = L.map('map', { center:[38.8,-96.5], zoom:6, zoomControl:true });
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom:19, subdomains:'abcd' }).addTo(map);
+
+const plainGroup = L.layerGroup().addTo(map);
+
+// ── Grid clustering ──
+function getPixelGridKey(latlng, zoom) {
+  const pt = map.project(latlng, zoom);
+  const gridSize = 60;
+  return Math.floor(pt.x / gridSize) + ',' + Math.floor(pt.y / gridSize);
+}
+
+function formatSales(n) {
+  if (!n) return '$0';
+  if (n >= 1000000) return '$' + (n/1000000).toFixed(1) + 'M';
+  if (n >= 1000) return '$' + Math.round(n/1000) + 'K';
+  return '$' + n;
+}
+
+function matchesFilters(d) {
+  const eff = getEffective(d);
+  if (eff.deleted) return false;
+  if (filters.state !== 'ALL' && eff.state !== filters.state) return false;
+  if (filters.grade !== 'ALL' && eff.grade !== filters.grade) return false;
+  if (filters.status !== 'ALL' && eff.status !== filters.status) return false;
+  if (filters.vert !== 'ALL') {
+    const v = eff.vertical.toLowerCase();
+    const fv = filters.vert.toLowerCase();
+    if (fv==='food' && !v.includes('food') && !v.includes('bev') && !v.includes('ag') && !v.includes('pet')) return false;
+    if (fv==='pharma' && !v.includes('pharma') && !v.includes('medical') && !v.includes('biotech') && !v.includes('animal health')) return false;
+    if (fv==='packaging' && !v.includes('packag')) return false;
+    if (fv==='automotive' && !v.includes('auto') && !v.includes('transport') && !v.includes('aero')) return false;
+    if (fv==='plastics' && !v.includes('plastic') && !v.includes('rubber')) return false;
+    if (fv==='consumer' && !v.includes('consumer') && !v.includes('cpg')) return false;
+    if (fv==='beverage' && !v.includes('beverage') && !v.includes('brew')) return false;
+  }
+  if (filters.search) {
+    const s = filters.search.toLowerCase();
+    if (!eff.company.toLowerCase().includes(s) && !eff.city.toLowerCase().includes(s) && !eff.vertical.toLowerCase().includes(s) && !eff.state.toLowerCase().includes(s) && !eff.address.toLowerCase().includes(s)) return false;
+  }
+  return true;
+}
+
+function getMarkerClass(d) {
+  const eff = getEffective(d);
+  if (eff.status === 'active') return 'status-active';
+  if (eff.status === 'lapsed') return 'status-lapsed';
+  return 'grade-' + eff.grade;
+}
+
+function buildPopup(d, idx) {
+  const eff = getEffective(d, idx);
+  const hasContacts = eff.contacts && eff.contacts.length > 0;
+  const statusLabel = eff.status === 'active' ? 'Active Customer' : eff.status === 'lapsed' ? 'Lapsed Customer' : 'Prospect';
+  const statusClass = eff.status === 'active' ? 'badge-active' : eff.status === 'lapsed' ? 'badge-lapsed' : '';
+  const gradeClass = 'badge-' + eff.grade.toLowerCase();
+  const trendIcon = eff.trend === 'Rising' ? '<span style="color:var(--a-color)">&uarr; Growing</span>' : eff.trend === 'Declining' ? '<span style="color:#FF6B6B">&darr; Declining</span>' : '&mdash;';
+
+  return \`<div class="popup-inner">
+    <div class="popup-company">\${eff.star ? '&#x2B50; ' : ''}\${eff.company}</div>
+    <div class="popup-row">&#x1F4CD; <strong>\${eff.address ? eff.address + ', ' : ''}\${eff.city}, \${eff.state}</strong></div>
+    <div class="popup-badges">
+      <span class="badge \${statusClass || 'badge-vert'}">\${statusLabel}</span>
+      <span class="badge \${gradeClass}">\${eff.grade}-GRADE (\${eff.score}pts)</span>
+      <span class="badge badge-vert">\${eff.vertical}</span>
+    </div>
+    <div class="popup-details">
+      \${eff.rev012 ? \`<div class="popup-detail-row"><span>Rev 12mo</span><span class="val green">\${formatSales(eff.rev012)}</span></div>\` : ''}
+      <div class="popup-detail-row"><span>YOY Trend</span><span class="val">\${trendIcon}</span></div>
+      <div class="popup-detail-row"><span>Upgrade Ready</span><span class="val">\${eff.upgradeReady ? 'Yes' : 'No'}</span></div>
+      <div class="popup-detail-row"><span>Production Lines</span><span class="val">\${eff.prodLines}</span></div>
+      <div class="popup-detail-row"><span>Comp. CIJ</span><span class="val">\${eff.compCIJ}</span></div>
+      <div class="popup-detail-row"><span>Comp. Laser</span><span class="val">\${eff.compLaser}</span></div>
+      \${eff.oppNote ? \`<div class="popup-detail-row"><span>Opportunities</span><span class="val">\${eff.oppNote}</span></div>\` : ''}
+    </div>
+    \${eff.note ? \`<div class="popup-note">\${eff.note}</div>\` : ''}
+    <div class="popup-actions">
+      \${hasContacts ? \`<div class="popup-btn primary" onclick="showContacts(\${idx})">&#x1F465; Contacts (\${eff.contacts.length})</div>\` : '<div style="font-size:10px;color:var(--text-dim);font-style:italic;margin-top:4px;font-family:IBM Plex Mono,monospace">No contacts on file</div>'}
+      <div class="popup-btn" onclick="openEditModal(\${idx})">&#x270F;&#xFE0F; Edit</div>
+    </div>
+  </div>\`;
+}
+
+function render() {
+  markers = [];
+  plainGroup.clearLayers();
+
+  // Include custom-added accounts from localStorage
+  const edits = loadEdits();
+  const customAccounts = [];
+  Object.keys(edits).forEach(key => {
+    const e = edits[key];
+    if (e.isCustom && !e.deleted) {
+      customAccounts.push(e.data);
+    }
+  });
+  const allData = [...RAW_DATA, ...customAccounts];
+
+  const filtered = allData.map((d,i) => ({...d, _idx:i})).filter(matchesFilters);
+
+  // Counts
+  let activeCount=0, lapsedCount=0, prospectCount=0;
+  filtered.forEach(d => {
+    const eff = getEffective(d);
+    if (eff.status === 'active') activeCount++;
+    else if (eff.status === 'lapsed') lapsedCount++;
+    else prospectCount++;
+  });
+
+  document.getElementById('result-count').textContent = filtered.length;
+  document.getElementById('hdr-total').textContent = filtered.length;
+  document.getElementById('hdr-active').textContent = activeCount;
+  document.getElementById('hdr-lapsed').textContent = lapsedCount;
+  document.getElementById('hdr-prospect').textContent = prospectCount;
+
+  // Sidebar list
+  const listEl = document.getElementById('results-list');
+  if (filtered.length === 0) {
+    listEl.innerHTML = '<div style="padding:20px 16px;color:var(--text-dim);font-size:12px;text-align:center;">No accounts match filters</div>';
+  } else {
+    listEl.innerHTML = filtered.slice(0, 200).map(d => {
+      const eff = getEffective(d);
+      return \`<div class="result-item status-\${eff.status} grade-\${eff.grade} \${selectedIdx === d._idx ? 'selected' : ''}" data-idx="\${d._idx}" onclick="selectAccount(\${d._idx})">
+        <div class="result-company">\${eff.star ? '<span class="result-star">&#x2B50;</span>' : ''}\${eff.ring ? '<span class="result-ring">&#x1F534;</span>' : ''}\${eff.company}</div>
+        <div class="result-meta">
+          <span class="result-grade \${eff.grade}">\${eff.grade}</span>
+          <span>\${eff.city}, \${eff.state}</span>
+          \${eff.status === 'active' ? '<span class="result-status-badge active">ACTIVE</span>' : ''}
+          \${eff.status === 'lapsed' ? '<span class="result-status-badge lapsed">LAPSED</span>' : ''}
+        </div>
+      </div>\`;
+    }).join('');
+    if (filtered.length > 200) {
+      listEl.innerHTML += \`<div style="padding:12px 16px;color:var(--text-dim);font-size:11px;text-align:center;font-family:'IBM Plex Mono',monospace;">+\${filtered.length - 200} more — use filters to narrow</div>\`;
+    }
+  }
+
+  // Grid-based clustering
+  const zoom = map.getZoom();
+  const gridSize = 60;
+  const clusters = {};
+
+  filtered.forEach(d => {
+    const latlng = L.latLng(d.lat, d.lng);
+    const pt = map.project(latlng, zoom);
+    const gx = Math.floor(pt.x / gridSize);
+    const gy = Math.floor(pt.y / gridSize);
+    const key = gx + ',' + gy;
+    if (!clusters[key]) clusters[key] = [];
+    clusters[key].push(d);
+  });
+
+  Object.values(clusters).forEach(group => {
+    if (group.length === 1 || zoom >= 13) {
+      group.forEach(d => {
+        const eff = getEffective(d);
+        const cls = getMarkerClass(d);
+        const starHTML = eff.star ? '<span class="star-overlay">&#x2B50;</span>' : '';
+        const ringHTML = eff.ring ? '<span class="ring-overlay"></span>' : '';
+        const icon = L.divIcon({
+          className: '',
+          html: \`<div class="map-marker \${cls} \${selectedIdx === d._idx ? 'selected' : ''}" data-idx="\${d._idx}">\${starHTML}\${ringHTML}</div>\`,
+          iconSize: [14,14], iconAnchor: [7,7]
+        });
+        const marker = L.marker([d.lat, d.lng], { icon, zIndexOffset: d.status==='active'?200:d.status==='lapsed'?100:d.grade==='A'?50:0 })
+          .bindPopup(buildPopup(d, d._idx), { maxWidth: 360 });
+        marker.on('click', () => selectAccount(d._idx));
+        plainGroup.addLayer(marker);
+        markers.push({ marker, idx: d._idx });
+      });
+    } else {
+      // Show cluster bubble
+      const avgLat = group.reduce((s,d) => s+d.lat, 0) / group.length;
+      const avgLng = group.reduce((s,d) => s+d.lng, 0) / group.length;
+      const n = group.length;
+      const sz = n < 10 ? 30 : n < 50 ? 36 : 44;
+      const icon = L.divIcon({
+        className: '',
+        html: \`<div class="my-cluster" style="width:\${sz}px;height:\${sz}px;font-size:\${sz<36?11:13}px">\${n}</div>\`,
+        iconSize: [sz,sz], iconAnchor: [sz/2,sz/2]
+      });
+      const marker = L.marker([avgLat, avgLng], { icon });
+      marker.on('click', () => {
+        const bounds = L.latLngBounds(group.map(d => [d.lat, d.lng]));
+        map.fitBounds(bounds.pad(0.1));
+      });
+      plainGroup.addLayer(marker);
+    }
+  });
+}
+
+// Re-render clusters on zoom
+map.on('zoomend', render);
+
+function selectAccount(idx) {
+  selectedIdx = idx;
+  const allData = [...RAW_DATA, ...(function(){ const edits=loadEdits(); const ca=[]; Object.keys(edits).forEach(k=>{const e=edits[k];if(e.isCustom&&!e.deleted)ca.push(e.data)}); return ca; })()];
+  const d = allData[idx];
+  if (!d) return;
+  map.setView([d.lat, d.lng], Math.max(map.getZoom(), 10));
+  const m = markers.find(m => m.idx === idx);
+  if (m) m.marker.openPopup();
+  document.querySelectorAll('.result-item').forEach(el => {
+    el.classList.toggle('selected', parseInt(el.dataset.idx) === idx);
+  });
+  const el = document.querySelector(\`.result-item[data-idx="\${idx}"]\`);
+  if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+// Filter handlers
+function setupPillGroup(groupId, filterKey) {
+  document.getElementById(groupId).querySelectorAll('.pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      document.getElementById(groupId).querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      filters[filterKey] = pill.dataset.val;
+      selectedIdx = null;
+      render();
+    });
+  });
+}
+setupPillGroup('state-filter', 'state');
+setupPillGroup('grade-filter', 'grade');
+setupPillGroup('status-filter', 'status');
+setupPillGroup('vert-filter', 'vert');
+
+document.getElementById('search').addEventListener('input', e => {
+  filters.search = e.target.value.trim();
+  selectedIdx = null;
+  render();
+});
+
+document.getElementById('clear-filters').addEventListener('click', () => {
+  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', search:'' };
+  document.getElementById('search').value = '';
+  document.querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.val === 'ALL'));
+  selectedIdx = null;
+  render();
+});
+
+// Contacts panel
+window.showContacts = function(idx) {
+  const allData = [...RAW_DATA, ...(function(){ const edits=loadEdits(); const ca=[]; Object.keys(edits).forEach(k=>{const e=edits[k];if(e.isCustom&&!e.deleted)ca.push(e.data)}); return ca; })()];
+  const d = allData[idx];
+  const eff = getEffective(d, idx);
+  document.getElementById('cp-company-name').textContent = eff.company;
+  const listEl = document.getElementById('cp-contact-list');
+
+  if (!eff.contacts || eff.contacts.length === 0) {
+    listEl.innerHTML = '<div class="cp-empty">No contacts on file for this account</div>';
+  } else {
+    listEl.innerHTML = eff.contacts.map(c => {
+      const hasPhone = c.phone && c.phone.trim() !== '';
+      const hasMobile = c.mobile && c.mobile.trim() !== '';
+      const hasEmail = c.email && c.email.trim() !== '';
+      const clean = n => n.replace(/[^0-9+]/g, '');
+      const isEquip = c.title === 'Equipment Contact';
+      const fitClass = isEquip ? 'equip' : (c.fit === 'A' || c.fit === 'B') ? 'fit-' + c.fit : 'fit-other';
+      return \`<div class="cp-contact \${fitClass}">
+        <div class="cp-name">
+          \${c.name}
+          \${c.dm ? '<span class="cp-dm-badge">&#x2605; DM</span>' : ''}
+          \${isEquip ? '<span class="cp-equip-badge">EQUIP</span>' : ''}
+        </div>
+        <div class="cp-title">\${c.title || 'Title unknown'}</div>
+        \${hasPhone ? \`<div class="cp-phone-row">&#x1F4DE; <a class="cp-phone" href="tel:+1\${clean(c.phone)}">\${c.phone}</a></div>\` : ''}
+        \${hasMobile ? \`<div class="cp-phone-row">&#x1F4F1; <a class="cp-phone" href="tel:+1\${clean(c.mobile)}">\${c.mobile}</a></div>\` : ''}
+        \${hasEmail ? \`<div class="cp-phone-row">&#x2709; <a class="cp-email" href="mailto:\${c.email}">\${c.email}</a></div>\` : ''}
+        \${!hasPhone && !hasMobile && !hasEmail ? '<div class="cp-nophone">No contact info on file</div>' : ''}
+      </div>\`;
+    }).join('');
+  }
+  document.getElementById('contacts-panel').classList.add('open');
+  map.closePopup();
+};
+
+window.closeContacts = function() {
+  document.getElementById('contacts-panel').classList.remove('open');
+};
+
+map.on('click', function() { closeContacts(); });
+
+// ── Edit Modal ──
+let editingIdx = null;
+
+window.openEditModal = function(idx) {
+  editingIdx = idx;
+  const allData = [...RAW_DATA, ...(function(){ const edits=loadEdits(); const ca=[]; Object.keys(edits).forEach(k=>{const e=edits[k];if(e.isCustom&&!e.deleted)ca.push(e.data)}); return ca; })()];
+  const d = allData[idx];
+  const eff = getEffective(d, idx);
+  document.getElementById('edit-modal-title').textContent = 'Edit: ' + eff.company;
+  document.getElementById('edit-star').value = eff.star ? '1' : '0';
+  document.getElementById('edit-ring').value = eff.ring ? '1' : '0';
+  document.getElementById('edit-grade').value = '';
+  document.getElementById('edit-status').value = '';
+  document.getElementById('edit-note').value = eff.note || '';
+
+  // Check if there's an existing override
+  const edits = loadEdits();
+  const key = getEditKey(d);
+  const e = edits[key] || {};
+  if (e.grade) document.getElementById('edit-grade').value = e.grade;
+  if (e.status) document.getElementById('edit-status').value = e.status;
+
+  document.getElementById('edit-delete-btn').onclick = function() {
+    if (confirm('Delete ' + eff.company + ' from the map?')) {
+      const edits = loadEdits();
+      const key = getEditKey(d);
+      edits[key] = { ...(edits[key]||{}), deleted: true };
+      saveEdits(edits);
+      closeEditModal();
+      map.closePopup();
+      render();
+    }
+  };
+
+  document.getElementById('edit-modal').classList.add('open');
+  map.closePopup();
+};
+
+window.saveEdit = function() {
+  const allData = [...RAW_DATA, ...(function(){ const edits=loadEdits(); const ca=[]; Object.keys(edits).forEach(k=>{const e=edits[k];if(e.isCustom&&!e.deleted)ca.push(e.data)}); return ca; })()];
+  const d = allData[editingIdx];
+  const edits = loadEdits();
+  const key = getEditKey(d);
+  const existing = edits[key] || {};
+
+  const star = document.getElementById('edit-star').value === '1';
+  const ring = document.getElementById('edit-ring').value === '1';
+  const grade = document.getElementById('edit-grade').value || null;
+  const status = document.getElementById('edit-status').value || null;
+  const note = document.getElementById('edit-note').value.trim();
+
+  edits[key] = { ...existing, star, ring, grade, status, note };
+  saveEdits(edits);
+  closeEditModal();
+  render();
+};
+
+window.closeEditModal = function() {
+  document.getElementById('edit-modal').classList.remove('open');
+  editingIdx = null;
+};
+
+// ── Add Account ──
+let addingPin = false;
+
+window.openAddAccount = function() {
+  document.getElementById('add-name').value = '';
+  document.getElementById('add-address').value = '';
+  document.getElementById('add-city').value = '';
+  document.getElementById('add-state').value = 'KS';
+  document.getElementById('add-grade').value = 'C';
+  document.getElementById('add-note').value = '';
+  document.getElementById('add-lat').value = '';
+  document.getElementById('add-lng').value = '';
+  document.getElementById('add-modal').classList.add('open');
+  addingPin = true;
+};
+
+// Allow clicking map to set coords when adding
+map.on('click', function(e) {
+  if (addingPin) {
+    document.getElementById('add-lat').value = e.latlng.lat.toFixed(4);
+    document.getElementById('add-lng').value = e.latlng.lng.toFixed(4);
+  }
+});
+
+window.saveNewAccount = function() {
+  const name = document.getElementById('add-name').value.trim();
+  const addr = document.getElementById('add-address').value.trim();
+  const city = document.getElementById('add-city').value.trim();
+  const state = document.getElementById('add-state').value;
+  const grade = document.getElementById('add-grade').value;
+  const note = document.getElementById('add-note').value.trim();
+  const lat = parseFloat(document.getElementById('add-lat').value);
+  const lng = parseFloat(document.getElementById('add-lng').value);
+
+  if (!name) { alert('Please enter a company name'); return; }
+  if (!lat || !lng || isNaN(lat) || isNaN(lng)) { alert('Please set coordinates (click on map or enter lat/lng)'); return; }
+
+  const newAccount = {
+    company: name, address: addr, city: city, state: state,
+    vertical: 'Other / Unknown', lat: lat, lng: lng,
+    status: 'prospect', grade: grade, score: 0,
+    rev012: 0, rev1224: 0, trend: 'unknown',
+    upgradeReady: false, compCIJ: 0, compLaser: 0,
+    prodLines: 0, oppNote: '', contacts: []
+  };
+
+  const edits = loadEdits();
+  const key = getEditKey(newAccount);
+  edits[key] = { isCustom: true, data: newAccount, note: note, star: false, ring: false };
+  saveEdits(edits);
+  closeAddModal();
+  render();
+};
+
+window.closeAddModal = function() {
+  document.getElementById('add-modal').classList.remove('open');
+  addingPin = false;
+};
+
+// ── Export Edits ──
+window.exportEdits = function() {
+  const edits = loadEdits();
+  const blob = new Blob([JSON.stringify(edits, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'vj-territory-edits-' + new Date().toISOString().slice(0,10) + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+// Initial render
+render();
+}); // end DOMContentLoaded
+<\/script>
+</body>
+</html>`;
+
+// ── MOBILE HTML ──
+const mobileHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+<title>VJ Territory Intel — Mobile</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"><\/script>
+<style>
+:root {
+  --bg: #0a0e14;
+  --surface: #111820;
+  --surface2: #161e28;
+  --border: #1e2d3d;
+  --border2: #243344;
+  --accent: #00d4ff;
+  --text: #c8d8e8;
+  --text-dim: #5a7a94;
+  --text-bright: #e8f4ff;
+  --active-color: #FFD700;
+  --active-glow: rgba(255,215,0,0.4);
+  --lapsed-color: #FF6B35;
+  --lapsed-glow: rgba(255,107,53,0.5);
+  --a-color: #2ECC71;
+  --a-glow: rgba(46,204,113,0.35);
+  --b-color: #3498DB;
+  --b-glow: rgba(52,152,219,0.35);
+  --c-color: #FF8C00;
+  --c-glow: rgba(255,140,0,0.35);
+  --d-color: #95A5A6;
+  --d-glow: rgba(149,165,166,0.35);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); color:var(--text); font-family:'IBM Plex Sans',sans-serif; }
+
+#map { position:fixed; top:0; left:0; right:0; bottom:0; z-index:1; }
+
+/* HEADER */
+#header {
+  position:fixed; top:0; left:0; right:0; z-index:500;
+  background:rgba(10,14,20,0.95); border-bottom:1px solid var(--border);
+  backdrop-filter:blur(8px); padding:8px 12px 6px;
+}
+#header-row1 { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; gap:8px; }
+.logo { font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:700; letter-spacing:2px; color:var(--text-bright); text-transform:uppercase; display:flex; align-items:center; gap:6px; white-space:nowrap; flex-shrink:0; }
+.logo-dot { width:6px; height:6px; background:var(--accent); border-radius:50%; box-shadow:0 0 8px var(--accent); animation:pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.7)} }
+.hamburger { font-size:18px; cursor:pointer; color:var(--text-dim); padding:4px 8px; border:1px solid var(--border2); border-radius:4px; }
+.hamburger:active { background:var(--surface2); }
+#search-wrap { position:relative; flex:1; }
+#search-wrap input { width:100%; background:var(--surface2); border:1px solid var(--border2); border-radius:4px; color:var(--text-bright); padding:7px 10px 7px 28px; font-family:'IBM Plex Sans',sans-serif; font-size:13px; outline:none; }
+#search-wrap input:focus { border-color:var(--accent); }
+#search-wrap input::placeholder { color:var(--text-dim); }
+.search-icon { position:absolute; left:8px; top:50%; transform:translateY(-50%); color:var(--text-dim); font-size:13px; pointer-events:none; }
+#stats-row { display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; scrollbar-width:none; }
+#stats-row::-webkit-scrollbar { display:none; }
+.stat-chip { font-family:'IBM Plex Mono',monospace; font-size:10px; white-space:nowrap; background:var(--surface2); border:1px solid var(--border2); border-radius:3px; padding:3px 8px; display:flex; align-items:center; gap:4px; }
+.stat-chip .val { font-size:13px; font-weight:600; }
+
+.leaflet-top { margin-top:82px; }
+
+/* SIDEBAR (mobile) */
+#sidebar {
+  position:fixed; top:0; left:0; bottom:0; width:280px; z-index:600;
+  background:var(--surface); border-right:1px solid var(--border2);
+  transform:translateX(-100%); transition:transform 0.3s ease;
+  display:flex; flex-direction:column; overflow:hidden;
+}
+#sidebar.open { transform:translateX(0); }
+#sidebar-overlay {
+  position:fixed; top:0; left:0; right:0; bottom:0; z-index:599;
+  background:rgba(0,0,0,0.5); display:none;
+}
+#sidebar-overlay.open { display:block; }
+#sidebar-header { padding:14px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+#sidebar-header h3 { font-family:'IBM Plex Mono',monospace; font-size:11px; text-transform:uppercase; letter-spacing:2px; color:var(--text-dim); }
+#sidebar-close { color:var(--text-dim); font-size:20px; cursor:pointer; }
+#sidebar-body { flex:1; overflow-y:auto; padding:14px 16px; }
+.filter-section { margin-bottom:14px; }
+.filter-lbl { font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:1.5px; color:var(--text-dim); margin-bottom:6px; }
+.filter-pills { display:flex; flex-wrap:wrap; gap:5px; }
+.pill { padding:4px 10px; border-radius:3px; font-size:11px; font-family:'IBM Plex Mono',monospace; cursor:pointer; border:1px solid var(--border2); background:var(--bg); color:var(--text-dim); transition:all 0.15s; user-select:none; }
+.pill:active { opacity:0.7; }
+.pill.active { background:var(--accent); border-color:var(--accent); color:#000; font-weight:600; }
+.pill.grade-a.active { background:var(--a-color); border-color:var(--a-color); }
+.pill.grade-b.active { background:var(--b-color); border-color:var(--b-color); }
+.pill.grade-c.active { background:var(--c-color); border-color:var(--c-color); }
+.pill.status-active.active { background:var(--active-color); border-color:var(--active-color); }
+.pill.status-lapsed.active { background:var(--lapsed-color); border-color:var(--lapsed-color); }
+#sidebar-actions { padding:14px 16px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:8px; }
+.sb-btn { width:100%; padding:8px; border:1px solid var(--border2); border-radius:4px; background:none; color:var(--text-dim); font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:1px; text-transform:uppercase; cursor:pointer; text-align:center; }
+.sb-btn:active { background:var(--surface2); }
+
+#legend-row { display:flex; gap:10px; flex-wrap:wrap; padding-top:10px; margin-top:10px; border-top:1px solid var(--border); }
+.leg-item { display:flex; align-items:center; gap:5px; font-size:9px; color:var(--text-dim); }
+.leg-dot { width:8px; height:8px; border-radius:50%; }
+
+/* Popups */
+.leaflet-popup-content-wrapper { background:var(--surface)!important; border:1px solid var(--border2)!important; border-radius:6px!important; box-shadow:0 8px 32px rgba(0,0,0,0.6)!important; padding:0!important; }
+.leaflet-popup-tip { background:var(--surface)!important; }
+.leaflet-popup-close-button { color:var(--text-dim)!important; }
+.leaflet-popup-content { margin:0!important; padding:0!important; width:auto!important; }
+.leaflet-control-attribution { display:none; }
+.popup-inner { padding:12px 14px; min-width:220px; max-width:300px; }
+.popup-company { font-family:'IBM Plex Mono',monospace; font-size:14px; font-weight:600; color:var(--text-bright); margin-bottom:6px; }
+.popup-row { font-size:11px; color:var(--text-dim); margin-bottom:3px; font-family:'IBM Plex Mono',monospace; }
+.popup-badges { display:flex; gap:5px; margin-top:8px; flex-wrap:wrap; }
+.badge { padding:2px 7px; border-radius:3px; font-size:10px; font-family:'IBM Plex Mono',monospace; font-weight:600; }
+.badge-a { background:rgba(46,204,113,0.12); color:var(--a-color); border:1px solid rgba(46,204,113,0.3); }
+.badge-b { background:rgba(52,152,219,0.12); color:var(--b-color); border:1px solid rgba(52,152,219,0.3); }
+.badge-c { background:rgba(255,140,0,0.12); color:var(--c-color); border:1px solid rgba(255,140,0,0.3); }
+.badge-d { background:rgba(149,165,166,0.12); color:var(--d-color); border:1px solid rgba(149,165,166,0.3); }
+.badge-active { background:rgba(255,215,0,0.12); color:var(--active-color); border:1px solid rgba(255,215,0,0.3); }
+.badge-lapsed { background:rgba(255,107,53,0.12); color:var(--lapsed-color); border:1px solid rgba(255,107,53,0.3); }
+.badge-vert { background:rgba(0,212,255,0.08); color:var(--accent); border:1px solid rgba(0,212,255,0.2); }
+.popup-details { margin-top:8px; padding-top:8px; border-top:1px solid var(--border); font-family:'IBM Plex Mono',monospace; font-size:10px; }
+.popup-detail-row { display:flex; justify-content:space-between; margin-bottom:3px; color:var(--text-dim); }
+.popup-detail-row .val { color:var(--text); font-weight:500; }
+.popup-detail-row .val.green { color:var(--a-color); }
+.popup-detail-row .val.red { color:#FF6B6B; }
+.popup-note { margin-top:6px; padding:6px 8px; background:rgba(0,212,255,0.05); border:1px solid var(--border); border-radius:3px; font-size:10px; color:var(--text); font-family:'IBM Plex Mono',monospace; }
+.popup-actions { margin-top:10px; display:flex; gap:6px; flex-wrap:wrap; }
+.popup-btn { display:inline-flex; align-items:center; gap:5px; padding:6px 10px; border-radius:4px; cursor:pointer; font-family:'IBM Plex Mono',monospace; font-size:10px; font-weight:600; border:1px solid var(--border2); color:var(--text-dim); background:var(--bg); transition:all 0.15s; }
+.popup-btn.primary { border-color:var(--accent); color:var(--accent); background:rgba(0,212,255,0.08); }
+
+/* Contacts panel */
+#contacts-panel {
+  position:fixed; top:0; bottom:0; left:0; right:0; z-index:800;
+  background:var(--surface); display:flex; flex-direction:column;
+  transform:translateX(100%); transition:transform 0.25s ease;
+}
+#contacts-panel.open { transform:translateX(0); }
+.cp-header { padding:14px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+.cp-company { font-family:'IBM Plex Mono',monospace; font-size:13px; font-weight:600; color:var(--text-bright); flex:1; padding-right:10px; }
+.cp-close { color:var(--text-dim); font-size:22px; cursor:pointer; }
+.cp-list { flex:1; overflow-y:auto; padding:6px 0; }
+.cp-contact { padding:10px 16px; border-bottom:1px solid var(--border); position:relative; }
+.cp-contact::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; }
+.cp-contact.equip::before { background:var(--accent); }
+.cp-contact.fit-A::before { background:var(--a-color); }
+.cp-contact.fit-B::before { background:var(--b-color); }
+.cp-contact.fit-other::before { background:var(--text-dim); opacity:0.4; }
+.cp-name { font-size:13px; font-weight:600; color:var(--text-bright); margin-bottom:2px; display:flex; align-items:center; gap:7px; }
+.cp-dm { font-family:'IBM Plex Mono',monospace; font-size:8px; font-weight:700; padding:1px 5px; border-radius:2px; background:rgba(255,215,0,0.12); color:var(--active-color); border:1px solid rgba(255,215,0,0.3); }
+.cp-equip { font-family:'IBM Plex Mono',monospace; font-size:8px; font-weight:700; padding:1px 5px; border-radius:2px; background:rgba(0,212,255,0.12); color:var(--accent); border:1px solid rgba(0,212,255,0.3); }
+.cp-title { font-size:11px; color:var(--text); margin-bottom:4px; }
+.cp-phone-row { font-size:12px; margin-top:2px; }
+.cp-phone-row a { font-family:'IBM Plex Mono',monospace; color:var(--accent); text-decoration:none; }
+.cp-email-row { font-size:11px; margin-top:2px; }
+.cp-email-row a { font-family:'IBM Plex Mono',monospace; color:var(--accent); text-decoration:none; font-size:10px; }
+.cp-nophone { font-size:10px; color:var(--text-dim); font-style:italic; margin-top:3px; font-family:'IBM Plex Mono',monospace; }
+.cp-empty { padding:24px 16px; color:var(--text-dim); font-family:'IBM Plex Mono',monospace; font-size:11px; text-align:center; }
+
+/* Edit modal */
+.edit-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:900; display:none; align-items:center; justify-content:center; padding:16px; }
+.edit-overlay.open { display:flex; }
+.edit-modal { background:var(--surface); border:1px solid var(--border2); border-radius:8px; padding:18px; width:100%; max-width:360px; box-shadow:0 16px 48px rgba(0,0,0,0.5); }
+.edit-modal h3 { font-family:'IBM Plex Mono',monospace; font-size:13px; color:var(--text-bright); margin-bottom:12px; }
+.edit-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.edit-row label { font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--text-dim); min-width:60px; }
+.edit-row select, .edit-row input, .edit-row textarea { background:var(--bg); border:1px solid var(--border2); border-radius:4px; color:var(--text-bright); padding:6px 10px; font-family:'IBM Plex Sans',sans-serif; font-size:12px; outline:none; flex:1; }
+.edit-row textarea { resize:vertical; min-height:50px; }
+.edit-btns { display:flex; gap:8px; margin-top:12px; justify-content:flex-end; }
+.edit-btn { padding:7px 14px; border-radius:4px; font-family:'IBM Plex Mono',monospace; font-size:11px; cursor:pointer; border:1px solid var(--border2); background:var(--bg); color:var(--text-dim); }
+.edit-btn.save { border-color:var(--a-color); color:var(--a-color); }
+.edit-btn.danger { border-color:#FF6B6B; color:#FF6B6B; }
+
+/* Map markers */
+.map-marker { width:12px; height:12px; border-radius:50%; border:2px solid rgba(255,255,255,0.25); cursor:pointer; transition:transform 0.15s; position:relative; }
+.map-marker:hover { transform:scale(1.6); }
+.map-marker.status-active { background:var(--active-color); box-shadow:0 0 10px var(--active-glow); }
+.map-marker.status-lapsed { background:var(--lapsed-color); box-shadow:0 0 12px var(--lapsed-glow); }
+.map-marker.grade-A { background:var(--a-color); box-shadow:0 0 8px var(--a-glow); }
+.map-marker.grade-B { background:var(--b-color); box-shadow:0 0 8px var(--b-glow); }
+.map-marker.grade-C { background:var(--c-color); box-shadow:0 0 8px var(--c-glow); }
+.map-marker.grade-D { background:var(--d-color); box-shadow:0 0 6px var(--d-glow); }
+.map-marker .star-overlay { position:absolute; top:-7px; right:-7px; font-size:8px; pointer-events:none; }
+.map-marker .ring-overlay { position:absolute; top:-2px; left:-2px; right:-2px; bottom:-2px; border-radius:50%; border:2px solid #FF4444; pointer-events:none; animation:ringPulse 1.5s infinite; }
+@keyframes ringPulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+.my-cluster { border-radius:50%; background:rgba(17,24,32,0.92); border:2px solid #243344; display:flex; align-items:center; justify-content:center; font-family:'IBM Plex Mono',monospace; font-weight:600; color:#e8f4ff; box-shadow:0 2px 10px rgba(0,0,0,0.5); cursor:pointer; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div id="header-row1">
+    <div class="hamburger" onclick="toggleSidebar()">&#x2630;</div>
+    <div class="logo"><div class="logo-dot"></div>VJ TERRITORY</div>
+    <div id="search-wrap">
+      <span class="search-icon">&#x2315;</span>
+      <input type="text" id="search" placeholder="Search...">
+    </div>
+  </div>
+  <div id="stats-row">
+    <div class="stat-chip"><span class="val" style="color:var(--text-bright)" id="s-total">0</span> Accounts</div>
+    <div class="stat-chip"><span class="val" style="color:var(--active-color)" id="s-active">0</span> Active</div>
+    <div class="stat-chip"><span class="val" style="color:var(--lapsed-color)" id="s-lapsed">0</span> Lapsed</div>
+    <div class="stat-chip"><span class="val" style="color:var(--accent)" id="s-prospect">0</span> Prospect</div>
+  </div>
+</div>
+
+<div id="map"></div>
+
+<!-- Sidebar -->
+<div id="sidebar-overlay" onclick="toggleSidebar()"></div>
+<div id="sidebar">
+  <div id="sidebar-header">
+    <h3>Filters</h3>
+    <div id="sidebar-close" onclick="toggleSidebar()">&#x2715;</div>
+  </div>
+  <div id="sidebar-body">
+    <div class="filter-section">
+      <div class="filter-lbl">State</div>
+      <div class="filter-pills" id="f-state">
+        <div class="pill active" data-val="ALL">All</div>
+        <div class="pill" data-val="MO">MO</div>
+        <div class="pill" data-val="KS">KS</div>
+      </div>
+    </div>
+    <div class="filter-section">
+      <div class="filter-lbl">Grade</div>
+      <div class="filter-pills" id="f-grade">
+        <div class="pill active" data-val="ALL">All</div>
+        <div class="pill grade-a" data-val="A">A</div>
+        <div class="pill grade-b" data-val="B">B</div>
+        <div class="pill grade-c" data-val="C">C</div>
+        <div class="pill" data-val="D">D</div>
+      </div>
+    </div>
+    <div class="filter-section">
+      <div class="filter-lbl">Status</div>
+      <div class="filter-pills" id="f-status">
+        <div class="pill active" data-val="ALL">All</div>
+        <div class="pill status-active" data-val="active">Active</div>
+        <div class="pill status-lapsed" data-val="lapsed">Lapsed</div>
+        <div class="pill" data-val="prospect">Prospect</div>
+      </div>
+    </div>
+    <div class="filter-section">
+      <div class="filter-lbl">Vertical</div>
+      <div class="filter-pills" id="f-vert">
+        <div class="pill active" data-val="ALL">All</div>
+        <div class="pill" data-val="Food">Food & Bev</div>
+        <div class="pill" data-val="Pharma">Pharma</div>
+        <div class="pill" data-val="Packaging">Packaging</div>
+        <div class="pill" data-val="Automotive">Auto</div>
+        <div class="pill" data-val="Plastics">Plastics</div>
+        <div class="pill" data-val="Consumer">CPG</div>
+        <div class="pill" data-val="Beverage">Beverage</div>
+      </div>
+    </div>
+    <div id="legend-row">
+      <div class="leg-item"><div class="leg-dot" style="background:var(--active-color)"></div> Active</div>
+      <div class="leg-item"><div class="leg-dot" style="background:var(--lapsed-color)"></div> Lapsed</div>
+      <div class="leg-item"><div class="leg-dot" style="background:var(--a-color)"></div> A-Grade</div>
+      <div class="leg-item"><div class="leg-dot" style="background:var(--b-color)"></div> B-Grade</div>
+      <div class="leg-item"><div class="leg-dot" style="background:var(--c-color)"></div> C-Grade</div>
+      <div class="leg-item"><div class="leg-dot" style="background:var(--d-color)"></div> D-Grade</div>
+    </div>
+  </div>
+  <div id="sidebar-actions">
+    <div class="sb-btn" onclick="openAddAccount()">+ Add Account</div>
+    <div class="sb-btn" onclick="exportEdits()">Export Edits</div>
+    <div class="sb-btn" onclick="resetFilters()">Reset Filters</div>
+  </div>
+</div>
+
+<!-- Contacts panel -->
+<div id="contacts-panel">
+  <div class="cp-header">
+    <div class="cp-company" id="cp-name"></div>
+    <div class="cp-close" onclick="closeContacts()">&#x2715;</div>
+  </div>
+  <div class="cp-list" id="cp-list"></div>
+</div>
+
+<!-- Edit modal -->
+<div class="edit-overlay" id="edit-modal">
+  <div class="edit-modal">
+    <h3 id="edit-title">Edit Account</h3>
+    <div class="edit-row"><label>Star</label><select id="edit-star"><option value="0">No</option><option value="1">&#x2B50; Yes</option></select></div>
+    <div class="edit-row"><label>Trial</label><select id="edit-ring"><option value="0">No</option><option value="1">&#x1F534; Active</option></select></div>
+    <div class="edit-row"><label>Grade</label><select id="edit-grade"><option value="">Auto</option><option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option></select></div>
+    <div class="edit-row"><label>Status</label><select id="edit-status"><option value="">Auto</option><option value="active">Active</option><option value="lapsed">Lapsed</option><option value="prospect">Prospect</option></select></div>
+    <div class="edit-row"><label>Note</label><textarea id="edit-note" placeholder="Note..."></textarea></div>
+    <div class="edit-btns">
+      <div class="edit-btn danger" id="edit-delete">Delete</div>
+      <div class="edit-btn" onclick="closeEditModal()">Cancel</div>
+      <div class="edit-btn save" onclick="saveEdit()">Save</div>
+    </div>
+  </div>
+</div>
+
+<!-- Add modal -->
+<div class="edit-overlay" id="add-modal">
+  <div class="edit-modal">
+    <h3>Add Account</h3>
+    <div class="edit-row"><label>Name</label><input id="add-name" type="text" placeholder="Company"></div>
+    <div class="edit-row"><label>Address</label><input id="add-address" type="text"></div>
+    <div class="edit-row"><label>City</label><input id="add-city" type="text"></div>
+    <div class="edit-row"><label>State</label><select id="add-state"><option value="KS">KS</option><option value="MO">MO</option></select></div>
+    <div class="edit-row"><label>Grade</label><select id="add-grade"><option value="C">C</option><option value="A">A</option><option value="B">B</option><option value="D">D</option></select></div>
+    <div class="edit-row"><label>Note</label><textarea id="add-note"></textarea></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--text-dim);margin-bottom:8px;">Tap map to set pin, or enter coords:</div>
+    <div class="edit-row"><label>Lat</label><input id="add-lat" type="number" step="0.0001"></div>
+    <div class="edit-row"><label>Lng</label><input id="add-lng" type="number" step="0.0001"></div>
+    <div class="edit-btns">
+      <div class="edit-btn" onclick="closeAddModal()">Cancel</div>
+      <div class="edit-btn save" onclick="saveNewAccount()">Add</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const RAW_DATA = ${RAW_DATA_JSON};
+
+// ── LocalStorage ──
+const LS_KEY = 'vj_territory_edits';
+function loadEdits() { try { return JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch(e) { return {}; } }
+function saveEdits(edits) { localStorage.setItem(LS_KEY, JSON.stringify(edits)); }
+function getEditKey(d) { return (d.company + '|' + (d.address || '')).toLowerCase(); }
+function getEffective(d) {
+  const edits = loadEdits();
+  const key = getEditKey(d);
+  const e = edits[key] || {};
+  return { ...d, grade: e.grade || d.grade, status: e.status || d.status, star: !!e.star, ring: !!e.ring, note: e.note || '', deleted: !!e.deleted };
+}
+
+// ── Map ──
+const map = L.map('map', { center:[38.8,-96.5], zoom:6, zoomControl:true });
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom:19, subdomains:'abcd' }).addTo(map);
+
+let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', search:'' };
+let markers = [];
+const plainGroup = L.layerGroup().addTo(map);
+
+function formatSales(n) {
+  if (!n) return '$0';
+  if (n >= 1000000) return '$' + (n/1000000).toFixed(1) + 'M';
+  if (n >= 1000) return '$' + Math.round(n/1000) + 'K';
+  return '$' + n;
+}
+
+function getMarkerClass(d) {
+  const eff = getEffective(d);
+  if (eff.status === 'active') return 'status-active';
+  if (eff.status === 'lapsed') return 'status-lapsed';
+  return 'grade-' + eff.grade;
+}
+
+function matchesFilters(d) {
+  const eff = getEffective(d);
+  if (eff.deleted) return false;
+  if (filters.state !== 'ALL' && eff.state !== filters.state) return false;
+  if (filters.grade !== 'ALL' && eff.grade !== filters.grade) return false;
+  if (filters.status !== 'ALL' && eff.status !== filters.status) return false;
+  if (filters.vert !== 'ALL') {
+    const v = eff.vertical.toLowerCase(), fv = filters.vert.toLowerCase();
+    if (fv==='food' && !v.includes('food') && !v.includes('bev') && !v.includes('ag') && !v.includes('pet')) return false;
+    if (fv==='pharma' && !v.includes('pharma') && !v.includes('medical') && !v.includes('biotech') && !v.includes('animal health')) return false;
+    if (fv==='packaging' && !v.includes('packag')) return false;
+    if (fv==='automotive' && !v.includes('auto') && !v.includes('transport') && !v.includes('aero')) return false;
+    if (fv==='plastics' && !v.includes('plastic') && !v.includes('rubber')) return false;
+    if (fv==='consumer' && !v.includes('consumer') && !v.includes('cpg')) return false;
+    if (fv==='beverage' && !v.includes('beverage') && !v.includes('brew')) return false;
+  }
+  if (filters.search) {
+    const s = filters.search.toLowerCase();
+    if (!eff.company.toLowerCase().includes(s) && !eff.city.toLowerCase().includes(s) && !eff.vertical.toLowerCase().includes(s) && !eff.state.toLowerCase().includes(s) && !eff.address.toLowerCase().includes(s)) return false;
+  }
+  return true;
+}
+
+function buildPopup(d, idx) {
+  const eff = getEffective(d);
+  const hasContacts = eff.contacts && eff.contacts.length > 0;
+  const statusLabel = eff.status === 'active' ? 'Active Customer' : eff.status === 'lapsed' ? 'Lapsed Customer' : 'Prospect';
+  const statusClass = eff.status === 'active' ? 'badge-active' : eff.status === 'lapsed' ? 'badge-lapsed' : '';
+  const gradeClass = 'badge-' + eff.grade.toLowerCase();
+  const trendIcon = eff.trend === 'Rising' ? '<span style="color:var(--a-color)">&uarr; Growing</span>' : eff.trend === 'Declining' ? '<span style="color:#FF6B6B">&darr; Declining</span>' : '&mdash;';
+
+  return \`<div class="popup-inner">
+    <div class="popup-company">\${eff.star ? '&#x2B50; ' : ''}\${eff.company}</div>
+    <div class="popup-row">&#x1F4CD; \${eff.address ? eff.address + ', ' : ''}\${eff.city}, \${eff.state}</div>
+    <div class="popup-badges">
+      <span class="badge \${statusClass || 'badge-vert'}">\${statusLabel}</span>
+      <span class="badge \${gradeClass}">\${eff.grade}-GRADE (\${eff.score}pts)</span>
+      <span class="badge badge-vert">\${eff.vertical}</span>
+    </div>
+    <div class="popup-details">
+      \${eff.rev012 ? \`<div class="popup-detail-row"><span>Rev 12mo</span><span class="val green">\${formatSales(eff.rev012)}</span></div>\` : ''}
+      <div class="popup-detail-row"><span>YOY</span><span class="val">\${trendIcon}</span></div>
+      <div class="popup-detail-row"><span>Upgrade</span><span class="val">\${eff.upgradeReady ? 'Yes' : 'No'}</span></div>
+      <div class="popup-detail-row"><span>Prod Lines</span><span class="val">\${eff.prodLines}</span></div>
+      <div class="popup-detail-row"><span>Comp CIJ</span><span class="val">\${eff.compCIJ}</span></div>
+      <div class="popup-detail-row"><span>Comp Laser</span><span class="val">\${eff.compLaser}</span></div>
+      \${eff.oppNote ? \`<div class="popup-detail-row"><span>Opps</span><span class="val">\${eff.oppNote}</span></div>\` : ''}
+    </div>
+    \${eff.note ? \`<div class="popup-note">\${eff.note}</div>\` : ''}
+    <div class="popup-actions">
+      \${hasContacts ? \`<div class="popup-btn primary" onclick="showContacts(\${idx})">&#x1F465; Contacts (\${eff.contacts.length})</div>\` : ''}
+      <div class="popup-btn" onclick="openEditModal(\${idx})">&#x270F;&#xFE0F; Edit</div>
+    </div>
+  </div>\`;
+}
+
+function render() {
+  markers = [];
+  plainGroup.clearLayers();
+
+  const edits = loadEdits();
+  const customAccounts = [];
+  Object.keys(edits).forEach(key => { const e = edits[key]; if (e.isCustom && !e.deleted) customAccounts.push(e.data); });
+  const allData = [...RAW_DATA, ...customAccounts];
+  const filtered = allData.map((d,i)=>({...d,_idx:i})).filter(matchesFilters);
+
+  let activeCount=0, lapsedCount=0, prospectCount=0;
+  filtered.forEach(d => {
+    const eff = getEffective(d);
+    if (eff.status==='active') activeCount++;
+    else if (eff.status==='lapsed') lapsedCount++;
+    else prospectCount++;
+  });
+
+  document.getElementById('s-total').textContent = filtered.length;
+  document.getElementById('s-active').textContent = activeCount;
+  document.getElementById('s-lapsed').textContent = lapsedCount;
+  document.getElementById('s-prospect').textContent = prospectCount;
+
+  // Grid clustering
+  const zoom = map.getZoom();
+  const gridSize = 55;
+  const clusters = {};
+  filtered.forEach(d => {
+    const pt = map.project([d.lat, d.lng], zoom);
+    const key = Math.floor(pt.x/gridSize) + ',' + Math.floor(pt.y/gridSize);
+    if (!clusters[key]) clusters[key] = [];
+    clusters[key].push(d);
+  });
+
+  Object.values(clusters).forEach(group => {
+    if (group.length === 1 || zoom >= 13) {
+      group.forEach(d => {
+        const eff = getEffective(d);
+        const cls = getMarkerClass(d);
+        const starHTML = eff.star ? '<span class="star-overlay">&#x2B50;</span>' : '';
+        const ringHTML = eff.ring ? '<span class="ring-overlay"></span>' : '';
+        const icon = L.divIcon({
+          className:'',
+          html:\`<div class="map-marker \${cls}">\${starHTML}\${ringHTML}</div>\`,
+          iconSize:[12,12], iconAnchor:[6,6]
+        });
+        const m = L.marker([d.lat, d.lng], { icon, zIndexOffset: d.status==='active'?200:d.status==='lapsed'?100:d.grade==='A'?50:0 })
+          .bindPopup(buildPopup(d, d._idx), { maxWidth:300 });
+        m.on('click', () => { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebar-overlay').classList.remove('open'); });
+        plainGroup.addLayer(m);
+        markers.push({ m, idx: d._idx });
+      });
+    } else {
+      const avgLat = group.reduce((s,d)=>s+d.lat,0)/group.length;
+      const avgLng = group.reduce((s,d)=>s+d.lng,0)/group.length;
+      const n = group.length;
+      const sz = n<10?28:n<50?34:42;
+      const icon = L.divIcon({
+        className:'',
+        html:\`<div class="my-cluster" style="width:\${sz}px;height:\${sz}px;font-size:\${sz<34?10:12}px">\${n}</div>\`,
+        iconSize:[sz,sz], iconAnchor:[sz/2,sz/2]
+      });
+      const m = L.marker([avgLat, avgLng], { icon });
+      m.on('click', () => { map.fitBounds(L.latLngBounds(group.map(d=>[d.lat,d.lng])).pad(0.1)); });
+      plainGroup.addLayer(m);
+    }
+  });
+}
+
+map.on('zoomend', render);
+
+// ── Sidebar ──
+window.toggleSidebar = function() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebar-overlay').classList.toggle('open');
+};
+
+function setupPills(groupId, filterKey) {
+  document.getElementById(groupId).querySelectorAll('.pill').forEach(p => {
+    p.addEventListener('click', () => {
+      document.getElementById(groupId).querySelectorAll('.pill').forEach(x => x.classList.remove('active'));
+      p.classList.add('active');
+      filters[filterKey] = p.dataset.val;
+      render();
+    });
+  });
+}
+setupPills('f-state','state');
+setupPills('f-grade','grade');
+setupPills('f-status','status');
+setupPills('f-vert','vert');
+
+document.getElementById('search').addEventListener('input', e => { filters.search = e.target.value.trim(); render(); });
+
+window.resetFilters = function() {
+  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', search:'' };
+  document.getElementById('search').value = '';
+  ['f-state','f-grade','f-status','f-vert'].forEach(id => {
+    document.getElementById(id).querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.val==='ALL'));
+  });
+  render();
+};
+
+// ── Contacts ──
+window.showContacts = function(idx) {
+  const edits = loadEdits();
+  const customAccounts = [];
+  Object.keys(edits).forEach(key => { const e = edits[key]; if (e.isCustom && !e.deleted) customAccounts.push(e.data); });
+  const allData = [...RAW_DATA, ...customAccounts];
+  const d = allData[idx];
+  const eff = getEffective(d);
+  document.getElementById('cp-name').textContent = eff.company;
+  const list = document.getElementById('cp-list');
+  if (!eff.contacts || eff.contacts.length === 0) {
+    list.innerHTML = '<div class="cp-empty">No contacts on file</div>';
+  } else {
+    list.innerHTML = eff.contacts.map(c => {
+      const hasPhone = c.phone && c.phone.trim() !== '';
+      const hasMobile = c.mobile && c.mobile.trim() !== '';
+      const hasEmail = c.email && c.email.trim() !== '';
+      const clean = n => n.replace(/[^0-9+]/g, '');
+      const isEquip = c.title === 'Equipment Contact';
+      const fitClass = isEquip ? 'equip' : (c.fit==='A'||c.fit==='B') ? 'fit-'+c.fit : 'fit-other';
+      return \`<div class="cp-contact \${fitClass}">
+        <div class="cp-name">\${c.name}\${c.dm?'<span class="cp-dm">&#x2605; DM</span>':''}\${isEquip?'<span class="cp-equip">EQUIP</span>':''}</div>
+        <div class="cp-title">\${c.title||'Title unknown'}</div>
+        \${hasPhone?\`<div class="cp-phone-row">&#x1F4DE; <a href="tel:+1\${clean(c.phone)}">\${c.phone}</a></div>\`:''}
+        \${hasMobile?\`<div class="cp-phone-row">&#x1F4F1; <a href="tel:+1\${clean(c.mobile)}">\${c.mobile}</a></div>\`:''}
+        \${hasEmail?\`<div class="cp-email-row">&#x2709; <a href="mailto:\${c.email}">\${c.email}</a></div>\`:''}
+        \${!hasPhone&&!hasMobile&&!hasEmail?'<div class="cp-nophone">No contact info on file</div>':''}
+      </div>\`;
+    }).join('');
+  }
+  map.closePopup();
+  document.getElementById('contacts-panel').classList.add('open');
+};
+
+window.closeContacts = function() { document.getElementById('contacts-panel').classList.remove('open'); };
+
+map.on('click', () => { closeContacts(); });
+
+// ── Edit ──
+let editingIdx = null;
+
+window.openEditModal = function(idx) {
+  editingIdx = idx;
+  const edits = loadEdits();
+  const customAccounts = [];
+  Object.keys(edits).forEach(key => { const e = edits[key]; if (e.isCustom && !e.deleted) customAccounts.push(e.data); });
+  const allData = [...RAW_DATA, ...customAccounts];
+  const d = allData[idx];
+  const eff = getEffective(d);
+  document.getElementById('edit-title').textContent = 'Edit: ' + eff.company;
+  document.getElementById('edit-star').value = eff.star ? '1' : '0';
+  document.getElementById('edit-ring').value = eff.ring ? '1' : '0';
+  const key = getEditKey(d);
+  const e = edits[key] || {};
+  document.getElementById('edit-grade').value = e.grade || '';
+  document.getElementById('edit-status').value = e.status || '';
+  document.getElementById('edit-note').value = eff.note || '';
+  document.getElementById('edit-delete').onclick = function() {
+    if (confirm('Delete ' + eff.company + '?')) {
+      const edits = loadEdits();
+      edits[key] = { ...(edits[key]||{}), deleted: true };
+      saveEdits(edits);
+      closeEditModal();
+      map.closePopup();
+      render();
+    }
+  };
+  document.getElementById('edit-modal').classList.add('open');
+  map.closePopup();
+};
+
+window.saveEdit = function() {
+  const edits = loadEdits();
+  const customAccounts = [];
+  Object.keys(edits).forEach(key => { const e = edits[key]; if (e.isCustom && !e.deleted) customAccounts.push(e.data); });
+  const allData = [...RAW_DATA, ...customAccounts];
+  const d = allData[editingIdx];
+  const key = getEditKey(d);
+  const existing = edits[key] || {};
+  edits[key] = {
+    ...existing,
+    star: document.getElementById('edit-star').value === '1',
+    ring: document.getElementById('edit-ring').value === '1',
+    grade: document.getElementById('edit-grade').value || null,
+    status: document.getElementById('edit-status').value || null,
+    note: document.getElementById('edit-note').value.trim()
+  };
+  saveEdits(edits);
+  closeEditModal();
+  render();
+};
+
+window.closeEditModal = function() { document.getElementById('edit-modal').classList.remove('open'); editingIdx = null; };
+
+// ── Add Account ──
+let addingPin = false;
+
+window.openAddAccount = function() {
+  toggleSidebar();
+  document.getElementById('add-name').value = '';
+  document.getElementById('add-address').value = '';
+  document.getElementById('add-city').value = '';
+  document.getElementById('add-state').value = 'KS';
+  document.getElementById('add-grade').value = 'C';
+  document.getElementById('add-note').value = '';
+  document.getElementById('add-lat').value = '';
+  document.getElementById('add-lng').value = '';
+  document.getElementById('add-modal').classList.add('open');
+  addingPin = true;
+};
+
+map.on('click', function(e) {
+  if (addingPin) {
+    document.getElementById('add-lat').value = e.latlng.lat.toFixed(4);
+    document.getElementById('add-lng').value = e.latlng.lng.toFixed(4);
+  }
+});
+
+window.saveNewAccount = function() {
+  const name = document.getElementById('add-name').value.trim();
+  const lat = parseFloat(document.getElementById('add-lat').value);
+  const lng = parseFloat(document.getElementById('add-lng').value);
+  if (!name) { alert('Enter a company name'); return; }
+  if (!lat || !lng || isNaN(lat) || isNaN(lng)) { alert('Set coordinates first'); return; }
+  const newAccount = {
+    company: name, address: document.getElementById('add-address').value.trim(),
+    city: document.getElementById('add-city').value.trim(), state: document.getElementById('add-state').value,
+    vertical: 'Other / Unknown', lat, lng, status: 'prospect',
+    grade: document.getElementById('add-grade').value, score: 0,
+    rev012: 0, rev1224: 0, trend: 'unknown', upgradeReady: false,
+    compCIJ: 0, compLaser: 0, prodLines: 0, oppNote: '', contacts: []
+  };
+  const edits = loadEdits();
+  const key = getEditKey(newAccount);
+  edits[key] = { isCustom: true, data: newAccount, note: document.getElementById('add-note').value.trim(), star: false, ring: false };
+  saveEdits(edits);
+  closeAddModal();
+  render();
+};
+
+window.closeAddModal = function() { document.getElementById('add-modal').classList.remove('open'); addingPin = false; };
+
+window.exportEdits = function() {
+  const edits = loadEdits();
+  const blob = new Blob([JSON.stringify(edits, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url;
+  a.download = 'vj-territory-edits-' + new Date().toISOString().slice(0,10) + '.json';
+  a.click(); URL.revokeObjectURL(url);
+};
+
+render();
+setTimeout(() => map.invalidateSize(), 100);
+<\/script>
+</body>
+</html>`;
+
+// ── Write files ──
+fs.writeFileSync('index.html', desktopHTML);
+fs.writeFileSync('vj-territory-mobile.html', mobileHTML);
+
+console.log('\\nDone! Wrote index.html and vj-territory-mobile.html');
+console.log(`Total accounts in RAW_DATA: ${accounts.length}`);
