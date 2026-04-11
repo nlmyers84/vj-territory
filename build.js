@@ -771,8 +771,8 @@ const desktopHTML = `<!DOCTYPE html>
   --text-bright: #e8f4ff;
   --active-color: #FFD700;
   --active-glow: rgba(255,215,0,0.4);
-  --lapsed-color: #FF6B35;
-  --lapsed-glow: rgba(255,107,53,0.5);
+  --lapsed-color: #E74C3C;
+  --lapsed-glow: rgba(231,76,60,0.5);
   --dormant-color: #E91E90;
   --dormant-glow: rgba(233,30,144,0.4);
   --a-color: #2ECC71;
@@ -854,7 +854,7 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
 .result-grade.D { background:rgba(149,165,166,0.15); color:var(--d-color); }
 .result-status-badge { padding:1px 5px; border-radius:2px; font-size:9px; font-weight:600; letter-spacing:0.5px; }
 .result-status-badge.active { background:rgba(255,215,0,0.15); color:var(--active-color); }
-.result-status-badge.lapsed { background:rgba(255,107,53,0.15); color:var(--lapsed-color); }
+.result-status-badge.lapsed { background:rgba(231,76,60,0.15); color:var(--lapsed-color); }
 .result-status-badge.dormant { background:rgba(233,30,144,0.15); color:var(--dormant-color); }
 .result-star { color:#FFD700; margin-right:4px; }
 .result-ring { color:#FF4444; margin-right:4px; font-size:8px; }
@@ -870,7 +870,7 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
 .map-marker { width:14px; height:14px; border-radius:50%; border:2px solid rgba(255,255,255,0.3); cursor:pointer; transition:transform 0.15s; position:relative; }
 .map-marker:hover { transform:scale(1.5); z-index:999!important; }
 .map-marker.status-active { background:var(--active-color); box-shadow:0 0 10px var(--active-glow); border:2px solid rgba(255,215,0,0.6); }
-.map-marker.status-lapsed { background:var(--lapsed-color); box-shadow:0 0 12px var(--lapsed-glow); border:2px solid rgba(255,107,53,0.7); }
+.map-marker.status-lapsed { background:var(--lapsed-color); box-shadow:0 0 12px var(--lapsed-glow); border:2px solid rgba(231,76,60,0.7); }
 .map-marker.status-dormant { background:var(--dormant-color); box-shadow:0 0 12px var(--dormant-glow); border:2px solid rgba(233,30,144,0.6); }
 .map-marker.grade-A { background:var(--a-color); box-shadow:0 0 8px var(--a-glow); }
 .map-marker.grade-B { background:var(--b-color); box-shadow:0 0 8px var(--b-glow); }
@@ -901,7 +901,7 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
 .badge-c { background:rgba(255,140,0,0.15); color:var(--c-color); border:1px solid rgba(255,140,0,0.3); }
 .badge-d { background:rgba(149,165,166,0.15); color:var(--d-color); border:1px solid rgba(149,165,166,0.3); }
 .badge-active { background:rgba(255,215,0,0.15); color:var(--active-color); border:1px solid rgba(255,215,0,0.3); }
-.badge-lapsed { background:rgba(255,107,53,0.15); color:var(--lapsed-color); border:1px solid rgba(255,107,53,0.3); }
+.badge-lapsed { background:rgba(231,76,60,0.15); color:var(--lapsed-color); border:1px solid rgba(231,76,60,0.3); }
 .badge-dormant { background:rgba(233,30,144,0.15); color:var(--dormant-color); border:1px solid rgba(233,30,144,0.3); }
 .badge-vert { background:rgba(0,212,255,0.08); color:var(--accent); border:1px solid rgba(0,212,255,0.2); }
 .popup-details { margin-top:8px; padding-top:8px; border-top:1px solid var(--border); font-family:'IBM Plex Mono',monospace; font-size:10px; }
@@ -1568,8 +1568,8 @@ const mobileHTML = `<!DOCTYPE html>
   --text-bright: #e8f4ff;
   --active-color: #FFD700;
   --active-glow: rgba(255,215,0,0.4);
-  --lapsed-color: #FF6B35;
-  --lapsed-glow: rgba(255,107,53,0.5);
+  --lapsed-color: #E74C3C;
+  --lapsed-glow: rgba(231,76,60,0.5);
   --dormant-color: #E91E90;
   --dormant-glow: rgba(233,30,144,0.4);
   --a-color: #2ECC71;
@@ -1663,7 +1663,7 @@ html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); col
 .badge-c { background:rgba(255,140,0,0.12); color:var(--c-color); border:1px solid rgba(255,140,0,0.3); }
 .badge-d { background:rgba(149,165,166,0.12); color:var(--d-color); border:1px solid rgba(149,165,166,0.3); }
 .badge-active { background:rgba(255,215,0,0.12); color:var(--active-color); border:1px solid rgba(255,215,0,0.3); }
-.badge-lapsed { background:rgba(255,107,53,0.12); color:var(--lapsed-color); border:1px solid rgba(255,107,53,0.3); }
+.badge-lapsed { background:rgba(231,76,60,0.12); color:var(--lapsed-color); border:1px solid rgba(231,76,60,0.3); }
 .badge-dormant { background:rgba(233,30,144,0.12); color:var(--dormant-color); border:1px solid rgba(233,30,144,0.3); }
 .badge-vert { background:rgba(0,212,255,0.08); color:var(--accent); border:1px solid rgba(0,212,255,0.2); }
 .popup-details { margin-top:8px; padding-top:8px; border-top:1px solid var(--border); font-family:'IBM Plex Mono',monospace; font-size:10px; }
