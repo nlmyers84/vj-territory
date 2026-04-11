@@ -14,16 +14,59 @@ function extractExistingData(htmlPath) {
   try { return JSON.parse(m[1]); } catch(e) { console.warn('Parse error', e.message); return []; }
 }
 
-const existingData = extractExistingData('index.html');
-// Build lookup: key = normalized(company + address) -> contacts array
-const existingContactsMap = {};
+// We need to extract from the PREVIOUS version in git, since current file was already overwritten
+const { execSync } = require('child_process');
+let existingData;
+try {
+  const oldHTML = execSync('git show HEAD~1:index.html', { encoding: 'utf8', maxBuffer: 50*1024*1024 });
+  const m2 = oldHTML.match(/const RAW_DATA\s*=\s*(\[[\s\S]*?\]);/);
+  existingData = m2 ? JSON.parse(m2[1]) : [];
+} catch(e) {
+  console.warn('Could not read previous HTML from git, trying current file');
+  existingData = extractExistingData('index.html');
+}
+
+// Build MULTIPLE lookups for contact matching (fallback strategy)
+// 1. Exact: company + address
+// 2. Fallback: company + city
+// 3. Last resort: company name only (if unique)
+const contactsByExactKey = {};    // company|address -> contacts
+const contactsByNameCity = {};    // company|city -> contacts
+const contactsByName = {};        // company -> [contacts arrays] (may have dupes)
+
 existingData.forEach(d => {
-  const key = (d.company + '|' + (d.address || '')).toLowerCase().trim();
-  if (d.contacts && d.contacts.length > 0) {
-    existingContactsMap[key] = d.contacts;
-  }
+  if (!d.contacts || d.contacts.length === 0) return;
+  const name = d.company.toLowerCase().trim();
+  const addr = (d.address || '').toLowerCase().trim();
+  const city = (d.city || '').toLowerCase().trim();
+
+  contactsByExactKey[name + '|' + addr] = d.contacts;
+  contactsByNameCity[name + '|' + city] = d.contacts;
+  if (!contactsByName[name]) contactsByName[name] = [];
+  contactsByName[name].push(d.contacts);
 });
-console.log(`Extracted ${Object.keys(existingContactsMap).length} accounts with contacts from existing HTML`);
+
+function findExistingContacts(company, address, city) {
+  const name = company.toLowerCase().trim();
+  const addr = (address || '').toLowerCase().trim();
+  const cty = (city || '').toLowerCase().trim();
+
+  // 1. Exact match: company + address
+  const exact = contactsByExactKey[name + '|' + addr];
+  if (exact) return exact;
+
+  // 2. Company + city
+  const byCity = contactsByNameCity[name + '|' + cty];
+  if (byCity) return byCity;
+
+  // 3. Company name only (if unique — only one location)
+  const byName = contactsByName[name];
+  if (byName && byName.length === 1) return byName[0];
+
+  return null;
+}
+
+console.log(`Extracted ${Object.keys(contactsByExactKey).length} accounts with contacts from previous HTML`);
 
 // ── 2. Read Excel ──
 const wb = XLSX.readFile('Full Accounts Data.xlsx');
@@ -208,12 +251,12 @@ rows.forEach(r => {
   const vertical = (r['Vertical'] || r['Industry'] || 'Other / Unknown').trim();
 
   // Contacts: merge existing + equipment contact from Excel
-  const existKey = (name + '|' + addr).toLowerCase();
   let contacts = [];
 
-  // Keep existing contacts (up to 5)
-  if (existingContactsMap[existKey]) {
-    contacts = existingContactsMap[existKey].slice(0, 5);
+  // Keep existing contacts (up to 5) — use fuzzy matching
+  const existingContacts = findExistingContacts(name, addr, city);
+  if (existingContacts) {
+    contacts = existingContacts.slice(0, 5);
   }
 
   // Add Equipment Contact from Excel
@@ -260,7 +303,54 @@ rows.forEach(r => {
   });
 });
 
-console.log(`Processed ${accounts.length} accounts (after filtering)`);
+// ── 8b. Carry forward old KS/MO accounts not in the Excel ──
+// Build a set of Excel company names (lowercased) for quick lookup
+const excelNamesSet = new Set(rows.map(r => (r['Account Name'] || '').trim().toLowerCase()));
+
+let carriedForward = 0;
+existingData.forEach(d => {
+  // Only carry forward KS/MO
+  if (d.state !== 'KS' && d.state !== 'MO') return;
+  // Skip if no coords
+  if (!d.lat || !d.lng) return;
+  // Skip if this company name exists in Excel (already processed above)
+  if (excelNamesSet.has(d.company.toLowerCase().trim())) return;
+  // Skip if already in accounts by dedup key
+  const dedupKey = (d.company + '|' + (d.address || '')).toLowerCase();
+  if (seenKeys.has(dedupKey)) return;
+  seenKeys.add(dedupKey);
+
+  // Convert old format to new format, keeping old contacts
+  const oldFit = d.fit || 'C';
+  // Map old fit (A/B) to new grade; old data only had A/B, default to C
+  const grade = (oldFit === 'A') ? 'C' : (oldFit === 'B') ? 'C' : 'D';
+  const status = d.status === 'active' ? 'active' : 'prospect';
+
+  accounts.push({
+    company: d.company,
+    address: d.address || '',
+    city: d.city || '',
+    state: d.state,
+    vertical: d.vertical || 'Other / Unknown',
+    lat: d.lat,
+    lng: d.lng,
+    status,
+    grade,
+    score: 0, // no Excel data to score from
+    rev012: Math.round(d.sales || 0),
+    rev1224: 0,
+    trend: 'unknown',
+    upgradeReady: false,
+    compCIJ: 0,
+    compLaser: 0,
+    prodLines: 0,
+    oppNote: '',
+    contacts: d.contacts || []
+  });
+  carriedForward++;
+});
+
+console.log(`Processed ${accounts.length} accounts (${accounts.length - carriedForward} from Excel, ${carriedForward} carried forward from old data)`);
 console.log(`  Active: ${accounts.filter(a=>a.status==='active').length}`);
 console.log(`  Lapsed: ${accounts.filter(a=>a.status==='lapsed').length}`);
 console.log(`  Prospect: ${accounts.filter(a=>a.status==='prospect').length}`);
