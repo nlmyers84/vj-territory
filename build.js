@@ -519,7 +519,8 @@ accounts.forEach((a, idx) => {
 function mergeContacts(existing, oldContacts) {
   const existingNames = new Set(existing.contacts.map(c => c.name.toLowerCase()));
   const newContacts = oldContacts.filter(c => !existingNames.has(c.name.toLowerCase()));
-  const totalSlots = 10 - existing.contacts.filter(c => c.title !== 'Equipment Contact').length;
+  // No cap during merge — keep all contacts so none are lost
+  const totalSlots = 999;
   if (totalSlots > 0 && newContacts.length > 0) {
     const equipIdx = existing.contacts.findIndex(c => c.title === 'Equipment Contact');
     const toAdd = newContacts.slice(0, totalSlots);
