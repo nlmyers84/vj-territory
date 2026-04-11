@@ -534,15 +534,36 @@ function mergeContacts(existing, oldContacts) {
   return false;
 }
 
-// Helper: find best match from a list of candidate indices (prefer matching address)
-function pickBest(indices, oldAddr) {
-  if (indices.length === 1) return indices[0];
-  const addr = (oldAddr || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
-  for (const idx of indices) {
-    const exAddr = (accounts[idx].address || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
-    if (exAddr === addr || exAddr.includes(addr) || addr.includes(exAddr)) return idx;
+// Helper: normalize address for comparison
+function normAddr(addr) {
+  return (addr || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+// Helper: check if two addresses refer to the same physical site
+function addrMatch(a, b) {
+  const na = normAddr(a);
+  const nb = normAddr(b);
+  if (!na || !nb) return false; // can't confirm same site without address
+  if (na === nb) return true;
+  if (na.includes(nb) || nb.includes(na)) return true;
+  // Check if street number matches (first numeric portion)
+  const numA = na.match(/^(\d+)/);
+  const numB = nb.match(/^(\d+)/);
+  if (numA && numB && numA[1] === numB[1]) {
+    // Same street number — check if street name overlaps
+    const wordsA = new Set(na.split(' ').filter(w => w.length > 2 && isNaN(w)));
+    const wordsB = nb.split(' ').filter(w => w.length > 2 && isNaN(w));
+    if (wordsB.some(w => wordsA.has(w))) return true;
   }
-  return indices[0];
+  return false;
+}
+
+// Helper: find a matching account index with SAME address, or null
+function pickSameSite(indices, oldAddr) {
+  for (const idx of indices) {
+    if (addrMatch(oldAddr, accounts[idx].address)) return idx;
+  }
+  return null; // no address match = different site, don't merge
 }
 
 let carriedForward = 0;
@@ -557,64 +578,59 @@ existingData.forEach(d => {
   const oldCore = coreName(d.company);
   const oldCity = (d.city || '').toLowerCase().trim();
 
-  // Strategy 1: exact normalized name + city
+  // All strategies require ADDRESS MATCH to merge — different address = different plant = separate pin
+
+  // Strategy 1: exact normalized name + city + address match
   const key1 = oldNorm + '|' + oldCity;
   if (accountsByNormNameCity[key1]) {
-    const bestIdx = pickBest(accountsByNormNameCity[key1], d.address);
-    if (mergeContacts(accounts[bestIdx], d.contacts)) mergedInto++;
-    return;
+    const samesite = pickSameSite(accountsByNormNameCity[key1], d.address);
+    if (samesite !== null) {
+      if (mergeContacts(accounts[samesite], d.contacts)) mergedInto++;
+      return;
+    }
   }
 
-  // Strategy 2: core name + city (catches "Berry Global" -> "Berry Plastics")
+  // Strategy 2: core name + city + address match
   const key2 = oldCore + '|' + oldCity;
-  if (accountsByCoreNameCity[key2] && accountsByCoreNameCity[key2].length <= 3) {
-    const bestIdx = pickBest(accountsByCoreNameCity[key2], d.address);
-    if (mergeContacts(accounts[bestIdx], d.contacts)) mergedInto++;
-    return;
+  if (accountsByCoreNameCity[key2] && accountsByCoreNameCity[key2].length <= 5) {
+    const samesite = pickSameSite(accountsByCoreNameCity[key2], d.address);
+    if (samesite !== null) {
+      if (mergeContacts(accounts[samesite], d.contacts)) mergedInto++;
+      return;
+    }
   }
 
-  // Strategy 3: normalized name only (any city, if unique)
+  // Strategy 3: normalized name only (any city, if unique) + address match
   if (accountsByNormName[oldNorm] && accountsByNormName[oldNorm].length === 1) {
-    if (mergeContacts(accounts[accountsByNormName[oldNorm][0]], d.contacts)) mergedInto++;
-    return;
+    const samesite = pickSameSite(accountsByNormName[oldNorm], d.address);
+    if (samesite !== null) {
+      if (mergeContacts(accounts[samesite], d.contacts)) mergedInto++;
+      return;
+    }
   }
 
-  // Strategy 4: check all accounts in same city for any strong word overlap
+  // Strategy 4: word-overlap in same city + address match
   const cityAccounts = Object.entries(accountsByNormNameCity)
     .filter(([k]) => k.endsWith('|' + oldCity))
     .flatMap(([, indices]) => indices);
 
   const oldWords = new Set(oldNorm.split(' ').filter(w => w.length > 2));
-  let bestCityMatch = null;
-  let bestCityScore = 0;
 
   for (const idx of cityAccounts) {
+    if (!addrMatch(d.address, accounts[idx].address)) continue;
     const exNorm = normName(accounts[idx].company);
     let score = 0;
-
-    // Substring containment (strong signal)
     if (exNorm.includes(oldNorm) || oldNorm.includes(exNorm)) score += 5;
-
-    // Shared significant words
     const exWords = new Set(exNorm.split(' ').filter(w => w.length > 2));
     let shared = 0;
     oldWords.forEach(w => { if (exWords.has(w)) shared++; });
     score += shared * 2;
-
-    // Core name match
     const exCore = coreName(accounts[idx].company);
     if (oldCore === exCore) score += 3;
-
-    if (score > bestCityScore) {
-      bestCityScore = score;
-      bestCityMatch = idx;
+    if (score >= 4) {
+      if (mergeContacts(accounts[idx], d.contacts)) mergedInto++;
+      return;
     }
-  }
-
-  // Require at least 2 shared significant words OR substring match
-  if (bestCityMatch !== null && bestCityScore >= 4) {
-    if (mergeContacts(accounts[bestCityMatch], d.contacts)) mergedInto++;
-    return;
   }
 
   // No match at all — carry forward as standalone account
