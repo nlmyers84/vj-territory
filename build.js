@@ -1127,6 +1127,17 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
         </div>
       </div>
       <div class="filter-group">
+        <span class="filter-label">Health Grade</span>
+        <div class="filter-pills" id="health-filter">
+          <div class="pill active" data-val="ALL">All</div>
+          <div class="pill grade-a" data-val="A">A</div>
+          <div class="pill grade-b" data-val="B">B</div>
+          <div class="pill grade-c" data-val="C">C</div>
+          <div class="pill" data-val="D">D</div>
+          <div class="pill" data-val="none">N/A</div>
+        </div>
+      </div>
+      <div class="filter-group">
         <span class="filter-label">Upgrade Ready</span>
         <div class="filter-pills" id="upgrade-filter">
           <div class="pill active" data-val="ALL">All</div>
@@ -1291,7 +1302,7 @@ function getEffective(d, idx) {
 }
 
 // ── State ──
-let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', upgrade:'ALL', contacts:'ALL', search:'' };
+let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', search:'' };
 let markers = [];
 let selectedIdx = null;
 
@@ -1334,6 +1345,10 @@ function matchesFilters(d) {
     if (fv==='consumer' && !v.match(/consumer|cpg/)) return false;
     if (fv==='graphics' && !v.match(/graphic|print|text|distribut/)) return false;
     if (fv==='other' && !v.match(/other|unknown|postal|whol/) && !v.match(/^\d/)) return false;
+  }
+  if (filters.health !== 'ALL') {
+    if (filters.health === 'none' && eff.healthGrade) return false;
+    if (filters.health !== 'none' && eff.healthGrade !== filters.health) return false;
   }
   if (filters.upgrade !== 'ALL') {
     if (filters.upgrade === 'Y' && !eff.upgradeReady) return false;
@@ -1507,6 +1522,7 @@ setupPillGroup('state-filter', 'state');
 setupPillGroup('grade-filter', 'grade');
 setupPillGroup('status-filter', 'status');
 setupPillGroup('vert-filter', 'vert');
+setupPillGroup('health-filter', 'health');
 setupPillGroup('upgrade-filter', 'upgrade');
 setupPillGroup('contacts-filter', 'contacts');
 
@@ -1517,7 +1533,7 @@ document.getElementById('search').addEventListener('input', e => {
 });
 
 document.getElementById('clear-filters').addEventListener('click', () => {
-  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', upgrade:'ALL', contacts:'ALL', search:'' };
+  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', search:'' };
   document.getElementById('search').value = '';
   document.querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.val === 'ALL'));
   selectedIdx = null;
@@ -1984,6 +2000,17 @@ html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); col
       </div>
     </div>
     <div class="filter-section">
+      <div class="filter-lbl">Health Grade</div>
+      <div class="filter-pills" id="f-health">
+        <div class="pill active" data-val="ALL">All</div>
+        <div class="pill grade-a" data-val="A">A</div>
+        <div class="pill grade-b" data-val="B">B</div>
+        <div class="pill grade-c" data-val="C">C</div>
+        <div class="pill" data-val="D">D</div>
+        <div class="pill" data-val="none">N/A</div>
+      </div>
+    </div>
+    <div class="filter-section">
       <div class="filter-lbl">Upgrade Ready</div>
       <div class="filter-pills" id="f-upgrade">
         <div class="pill active" data-val="ALL">All</div>
@@ -2118,7 +2145,7 @@ function getEffective(d) {
 const map = L.map('map', { center:[38.8,-96.5], zoom:6, zoomControl:true });
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom:19, subdomains:'abcd' }).addTo(map);
 
-let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', upgrade:'ALL', contacts:'ALL', search:'' };
+let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', search:'' };
 let markers = [];
 const plainGroup = L.layerGroup().addTo(map);
 
@@ -2160,6 +2187,10 @@ function matchesFilters(d) {
     if (fv==='consumer' && !v.match(/consumer|cpg/)) return false;
     if (fv==='graphics' && !v.match(/graphic|print|text|distribut/)) return false;
     if (fv==='other' && !v.match(/other|unknown|postal|whol/) && !v.match(/^\d/)) return false;
+  }
+  if (filters.health !== 'ALL') {
+    if (filters.health === 'none' && eff.healthGrade) return false;
+    if (filters.health !== 'none' && eff.healthGrade !== filters.health) return false;
   }
   if (filters.upgrade !== 'ALL') {
     if (filters.upgrade === 'Y' && !eff.upgradeReady) return false;
@@ -2281,13 +2312,14 @@ setupPills('f-state','state');
 setupPills('f-grade','grade');
 setupPills('f-status','status');
 setupPills('f-vert','vert');
+setupPills('f-health','health');
 setupPills('f-upgrade','upgrade');
 setupPills('f-contacts','contacts');
 
 document.getElementById('search').addEventListener('input', e => { filters.search = e.target.value.trim(); render(); });
 
 window.resetFilters = function() {
-  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', upgrade:'ALL', contacts:'ALL', search:'' };
+  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', search:'' };
   document.getElementById('search').value = '';
   ['f-state','f-grade','f-status','f-vert'].forEach(id => {
     document.getElementById(id).querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.val==='ALL'));
