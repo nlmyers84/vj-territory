@@ -1162,6 +1162,17 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
           <div class="pill" data-val="N">None</div>
         </div>
       </div>
+      <div class="filter-group">
+        <span class="filter-label">Revenue (12mo)</span>
+        <div class="filter-pills" id="rev-filter">
+          <div class="pill active" data-val="ALL">All</div>
+          <div class="pill" data-val="0">$0</div>
+          <div class="pill" data-val="1-10k">&lt;$10K</div>
+          <div class="pill" data-val="10-50k">$10-50K</div>
+          <div class="pill" data-val="50-100k">$50-100K</div>
+          <div class="pill" data-val="100k+">$100K+</div>
+        </div>
+      </div>
     </div>
     <div class="results-header">
       <div class="results-count">Showing <span id="result-count">0</span> accounts</div>
@@ -1310,7 +1321,7 @@ function getEffective(d, idx) {
 }
 
 // ── State ──
-let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', search:'' };
+let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', rev:'ALL', search:'' };
 let markers = [];
 let selectedIdx = null;
 
@@ -1372,6 +1383,14 @@ function matchesFilters(d) {
     const hasOpps = eff.oppNote && eff.oppNote.length > 0;
     if (filters.opps === 'Y' && !hasOpps) return false;
     if (filters.opps === 'N' && hasOpps) return false;
+  }
+  if (filters.rev !== 'ALL') {
+    const r = eff.rev012 || 0;
+    if (filters.rev === '0' && r !== 0) return false;
+    if (filters.rev === '1-10k' && (r <= 0 || r >= 10000)) return false;
+    if (filters.rev === '10-50k' && (r < 10000 || r >= 50000)) return false;
+    if (filters.rev === '50-100k' && (r < 50000 || r >= 100000)) return false;
+    if (filters.rev === '100k+' && r < 100000) return false;
   }
   if (filters.search) {
     const s = filters.search.toLowerCase();
@@ -1539,6 +1558,7 @@ setupPillGroup('health-filter', 'health');
 setupPillGroup('upgrade-filter', 'upgrade');
 setupPillGroup('contacts-filter', 'contacts');
 setupPillGroup('opps-filter', 'opps');
+setupPillGroup('rev-filter', 'rev');
 
 document.getElementById('search').addEventListener('input', e => {
   filters.search = e.target.value.trim();
@@ -1547,7 +1567,7 @@ document.getElementById('search').addEventListener('input', e => {
 });
 
 document.getElementById('clear-filters').addEventListener('click', () => {
-  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', search:'' };
+  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', rev:'ALL', search:'' };
   document.getElementById('search').value = '';
   document.querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.val === 'ALL'));
   selectedIdx = null;
@@ -2049,6 +2069,17 @@ html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); col
         <div class="pill" data-val="N">None</div>
       </div>
     </div>
+    <div class="filter-section">
+      <div class="filter-lbl">Revenue (12mo)</div>
+      <div class="filter-pills" id="f-rev">
+        <div class="pill active" data-val="ALL">All</div>
+        <div class="pill" data-val="0">$0</div>
+        <div class="pill" data-val="1-10k">&lt;$10K</div>
+        <div class="pill" data-val="10-50k">$10-50K</div>
+        <div class="pill" data-val="50-100k">$50-100K</div>
+        <div class="pill" data-val="100k+">$100K+</div>
+      </div>
+    </div>
     <div id="legend-row">
       <div class="leg-item"><div class="leg-dot" style="background:var(--active-color)"></div> Active</div>
       <div class="leg-item"><div class="leg-dot" style="background:var(--lapsed-color)"></div> Lapsed</div>
@@ -2167,7 +2198,7 @@ function getEffective(d) {
 const map = L.map('map', { center:[38.8,-96.5], zoom:6, zoomControl:true });
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom:19, subdomains:'abcd' }).addTo(map);
 
-let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', search:'' };
+let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', rev:'ALL', search:'' };
 let markers = [];
 const plainGroup = L.layerGroup().addTo(map);
 
@@ -2228,6 +2259,14 @@ function matchesFilters(d) {
     const hasOpps = eff.oppNote && eff.oppNote.length > 0;
     if (filters.opps === 'Y' && !hasOpps) return false;
     if (filters.opps === 'N' && hasOpps) return false;
+  }
+  if (filters.rev !== 'ALL') {
+    const r = eff.rev012 || 0;
+    if (filters.rev === '0' && r !== 0) return false;
+    if (filters.rev === '1-10k' && (r <= 0 || r >= 10000)) return false;
+    if (filters.rev === '10-50k' && (r < 10000 || r >= 50000)) return false;
+    if (filters.rev === '50-100k' && (r < 50000 || r >= 100000)) return false;
+    if (filters.rev === '100k+' && r < 100000) return false;
   }
   if (filters.search) {
     const s = filters.search.toLowerCase();
@@ -2343,11 +2382,12 @@ setupPills('f-health','health');
 setupPills('f-upgrade','upgrade');
 setupPills('f-contacts','contacts');
 setupPills('f-opps','opps');
+setupPills('f-rev','rev');
 
 document.getElementById('search').addEventListener('input', e => { filters.search = e.target.value.trim(); render(); });
 
 window.resetFilters = function() {
-  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', search:'' };
+  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', rev:'ALL', search:'' };
   document.getElementById('search').value = '';
   ['f-state','f-grade','f-status','f-vert'].forEach(id => {
     document.getElementById(id).querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.val==='ALL'));
