@@ -18,7 +18,8 @@ function extractExistingData(htmlPath) {
 const { execSync } = require('child_process');
 let existingData;
 try {
-  const oldHTML = execSync('git show HEAD~1:index.html', { encoding: 'utf8', maxBuffer: 50*1024*1024 });
+  // Go back to the original commit before any rebuilds (200cd4a)
+  const oldHTML = execSync('git show 200cd4a:index.html', { encoding: 'utf8', maxBuffer: 50*1024*1024 });
   const m2 = oldHTML.match(/const RAW_DATA\s*=\s*(\[[\s\S]*?\]);/);
   existingData = m2 ? JSON.parse(m2[1]) : [];
 } catch(e) {
@@ -303,30 +304,117 @@ rows.forEach(r => {
   });
 });
 
-// ── 8b. Carry forward old KS/MO accounts not in the Excel ──
-// Build a set of Excel company names (lowercased) for quick lookup
-const excelNamesSet = new Set(rows.map(r => (r['Account Name'] || '').trim().toLowerCase()));
+// ── 8b. Carry forward old KS/MO accounts, merging where possible ──
+
+// Normalize a company name for fuzzy matching
+function normName(name) {
+  return name.toLowerCase()
+    .replace(/['']/g, '')
+    // Strip common suffixes and parenthetical/dash annotations
+    .replace(/\b(inc|llc|corp|co|company|corporation|ltd|lp)\b\.?/g, '')
+    .replace(/\s*[—–-]\s*.*(new|plant|facility|division|div|site|loc|bldg|building).*$/i, '')
+    .replace(/\s*\(.*?\)\s*/g, ' ')
+    .replace(/[^a-z0-9 ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Build lookup: normName + city -> array of account indices in accounts[]
+const accountsByNormNameCity = {};
+accounts.forEach((a, idx) => {
+  const key = normName(a.company) + '|' + a.city.toLowerCase().trim();
+  if (!accountsByNormNameCity[key]) accountsByNormNameCity[key] = [];
+  accountsByNormNameCity[key].push(idx);
+});
 
 let carriedForward = 0;
+let mergedInto = 0;
+
 existingData.forEach(d => {
   // Only carry forward KS/MO
   if (d.state !== 'KS' && d.state !== 'MO') return;
   // Skip if no coords
   if (!d.lat || !d.lng) return;
-  // Skip if this company name exists in Excel (already processed above)
-  if (excelNamesSet.has(d.company.toLowerCase().trim())) return;
-  // Skip if already in accounts by dedup key
+  // Skip if no contacts (nothing to carry forward)
+  if (!d.contacts || d.contacts.length === 0) return;
+
+  const oldNorm = normName(d.company);
+  const oldCity = (d.city || '').toLowerCase().trim();
+
+  // Try to find a matching Excel account by normalized name + city
+  const key = oldNorm + '|' + oldCity;
+  const matchIndices = accountsByNormNameCity[key];
+
+  if (matchIndices && matchIndices.length > 0) {
+    // Merge contacts into the best matching Excel account (first match, or one with same address)
+    let bestIdx = matchIndices[0];
+    // Prefer matching address if possible
+    const oldAddr = (d.address || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+    for (const idx of matchIndices) {
+      const exAddr = (accounts[idx].address || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+      if (exAddr === oldAddr || exAddr.includes(oldAddr) || oldAddr.includes(exAddr)) {
+        bestIdx = idx;
+        break;
+      }
+    }
+
+    // Merge: add old contacts that aren't already present (by name)
+    const existing = accounts[bestIdx];
+    const existingNames = new Set(existing.contacts.map(c => c.name.toLowerCase()));
+    const oldContacts = d.contacts.filter(c => !existingNames.has(c.name.toLowerCase()));
+    // Keep up to 5 old contacts + existing
+    const totalSlots = 5 - existing.contacts.filter(c => c.title !== 'Equipment Contact').length;
+    if (totalSlots > 0 && oldContacts.length > 0) {
+      // Insert old contacts before Equipment Contact
+      const equipIdx = existing.contacts.findIndex(c => c.title === 'Equipment Contact');
+      const toAdd = oldContacts.slice(0, totalSlots);
+      if (equipIdx >= 0) {
+        existing.contacts.splice(equipIdx, 0, ...toAdd);
+      } else {
+        existing.contacts.push(...toAdd);
+      }
+      mergedInto++;
+    }
+    return;
+  }
+
+  // No match — also try normName only (if unique location)
+  const nameOnlyMatches = [];
+  Object.keys(accountsByNormNameCity).forEach(k => {
+    if (k.startsWith(oldNorm + '|')) {
+      accountsByNormNameCity[k].forEach(idx => nameOnlyMatches.push(idx));
+    }
+  });
+
+  // If there's exactly one location for this company, merge there
+  if (nameOnlyMatches.length === 1) {
+    const existing = accounts[nameOnlyMatches[0]];
+    const existingNames = new Set(existing.contacts.map(c => c.name.toLowerCase()));
+    const oldContacts = d.contacts.filter(c => !existingNames.has(c.name.toLowerCase()));
+    const totalSlots = 5 - existing.contacts.filter(c => c.title !== 'Equipment Contact').length;
+    if (totalSlots > 0 && oldContacts.length > 0) {
+      const equipIdx = existing.contacts.findIndex(c => c.title === 'Equipment Contact');
+      const toAdd = oldContacts.slice(0, totalSlots);
+      if (equipIdx >= 0) {
+        existing.contacts.splice(equipIdx, 0, ...toAdd);
+      } else {
+        existing.contacts.push(...toAdd);
+      }
+      mergedInto++;
+    }
+    return;
+  }
+
+  // No match at all — carry forward as standalone account
   const dedupKey = (d.company + '|' + (d.address || '')).toLowerCase();
   if (seenKeys.has(dedupKey)) return;
   seenKeys.add(dedupKey);
 
-  // Convert old format to new format, keeping old contacts
   const oldFit = d.fit || 'C';
-  // Map old fit (A/B) to new grade; old data only had A/B, default to C
   const grade = (oldFit === 'A') ? 'C' : (oldFit === 'B') ? 'C' : 'D';
   const status = d.status === 'active' ? 'active' : 'prospect';
 
-  accounts.push({
+  const newAcct = {
     company: d.company,
     address: d.address || '',
     city: d.city || '',
@@ -336,7 +424,7 @@ existingData.forEach(d => {
     lng: d.lng,
     status,
     grade,
-    score: 0, // no Excel data to score from
+    score: 0,
     rev012: Math.round(d.sales || 0),
     rev1224: 0,
     trend: 'unknown',
@@ -346,11 +434,18 @@ existingData.forEach(d => {
     prodLines: 0,
     oppNote: '',
     contacts: d.contacts || []
-  });
+  };
+  accounts.push(newAcct);
+
+  // Register in lookup so subsequent old entries for same company+city can merge
+  const newKey = normName(newAcct.company) + '|' + newAcct.city.toLowerCase().trim();
+  if (!accountsByNormNameCity[newKey]) accountsByNormNameCity[newKey] = [];
+  accountsByNormNameCity[newKey].push(accounts.length - 1);
+
   carriedForward++;
 });
 
-console.log(`Processed ${accounts.length} accounts (${accounts.length - carriedForward} from Excel, ${carriedForward} carried forward from old data)`);
+console.log(`Processed ${accounts.length} accounts (${accounts.length - carriedForward} from Excel/merged, ${carriedForward} carried forward, ${mergedInto} old entries merged into Excel accounts)`);
 console.log(`  Active: ${accounts.filter(a=>a.status==='active').length}`);
 console.log(`  Lapsed: ${accounts.filter(a=>a.status==='lapsed').length}`);
 console.log(`  Prospect: ${accounts.filter(a=>a.status==='prospect').length}`);
