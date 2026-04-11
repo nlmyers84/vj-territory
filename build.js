@@ -1048,6 +1048,15 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
           <div class="pill" data-val="N">No</div>
         </div>
       </div>
+      <div class="filter-group">
+        <span class="filter-label">Contacts</span>
+        <div class="filter-pills" id="contacts-filter">
+          <div class="pill active" data-val="ALL">All</div>
+          <div class="pill" data-val="0">0</div>
+          <div class="pill" data-val="1">1</div>
+          <div class="pill" data-val="2+">2+</div>
+        </div>
+      </div>
     </div>
     <div class="results-header">
       <div class="results-count">Showing <span id="result-count">0</span> accounts</div>
@@ -1196,7 +1205,7 @@ function getEffective(d, idx) {
 }
 
 // ── State ──
-let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', upgrade:'ALL', search:'' };
+let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', upgrade:'ALL', contacts:'ALL', search:'' };
 let markers = [];
 let selectedIdx = null;
 
@@ -1235,6 +1244,12 @@ function matchesFilters(d) {
   if (filters.upgrade !== 'ALL') {
     if (filters.upgrade === 'Y' && !eff.upgradeReady) return false;
     if (filters.upgrade === 'N' && eff.upgradeReady) return false;
+  }
+  if (filters.contacts !== 'ALL') {
+    const cnt = eff.contacts ? eff.contacts.length : 0;
+    if (filters.contacts === '0' && cnt !== 0) return false;
+    if (filters.contacts === '1' && cnt !== 1) return false;
+    if (filters.contacts === '2+' && cnt < 2) return false;
   }
   if (filters.search) {
     const s = filters.search.toLowerCase();
@@ -1399,6 +1414,7 @@ setupPillGroup('grade-filter', 'grade');
 setupPillGroup('status-filter', 'status');
 setupPillGroup('vert-filter', 'vert');
 setupPillGroup('upgrade-filter', 'upgrade');
+setupPillGroup('contacts-filter', 'contacts');
 
 document.getElementById('search').addEventListener('input', e => {
   filters.search = e.target.value.trim();
@@ -1407,7 +1423,7 @@ document.getElementById('search').addEventListener('input', e => {
 });
 
 document.getElementById('clear-filters').addEventListener('click', () => {
-  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', upgrade:'ALL', search:'' };
+  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', upgrade:'ALL', contacts:'ALL', search:'' };
   document.getElementById('search').value = '';
   document.querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.val === 'ALL'));
   selectedIdx = null;
@@ -1873,6 +1889,15 @@ html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); col
         <div class="pill" data-val="N">No</div>
       </div>
     </div>
+    <div class="filter-section">
+      <div class="filter-lbl">Contacts</div>
+      <div class="filter-pills" id="f-contacts">
+        <div class="pill active" data-val="ALL">All</div>
+        <div class="pill" data-val="0">0</div>
+        <div class="pill" data-val="1">1</div>
+        <div class="pill" data-val="2+">2+</div>
+      </div>
+    </div>
     <div id="legend-row">
       <div class="leg-item"><div class="leg-dot" style="background:var(--active-color)"></div> Active</div>
       <div class="leg-item"><div class="leg-dot" style="background:var(--lapsed-color)"></div> Lapsed</div>
@@ -1991,7 +2016,7 @@ function getEffective(d) {
 const map = L.map('map', { center:[38.8,-96.5], zoom:6, zoomControl:true });
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom:19, subdomains:'abcd' }).addTo(map);
 
-let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', upgrade:'ALL', search:'' };
+let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', upgrade:'ALL', contacts:'ALL', search:'' };
 let markers = [];
 const plainGroup = L.layerGroup().addTo(map);
 
@@ -2029,6 +2054,12 @@ function matchesFilters(d) {
   if (filters.upgrade !== 'ALL') {
     if (filters.upgrade === 'Y' && !eff.upgradeReady) return false;
     if (filters.upgrade === 'N' && eff.upgradeReady) return false;
+  }
+  if (filters.contacts !== 'ALL') {
+    const cnt = eff.contacts ? eff.contacts.length : 0;
+    if (filters.contacts === '0' && cnt !== 0) return false;
+    if (filters.contacts === '1' && cnt !== 1) return false;
+    if (filters.contacts === '2+' && cnt < 2) return false;
   }
   if (filters.search) {
     const s = filters.search.toLowerCase();
@@ -2141,11 +2172,12 @@ setupPills('f-grade','grade');
 setupPills('f-status','status');
 setupPills('f-vert','vert');
 setupPills('f-upgrade','upgrade');
+setupPills('f-contacts','contacts');
 
 document.getElementById('search').addEventListener('input', e => { filters.search = e.target.value.trim(); render(); });
 
 window.resetFilters = function() {
-  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', upgrade:'ALL', search:'' };
+  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', upgrade:'ALL', contacts:'ALL', search:'' };
   document.getElementById('search').value = '';
   ['f-state','f-grade','f-status','f-vert'].forEach(id => {
     document.getElementById(id).querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.val==='ALL'));
