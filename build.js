@@ -984,12 +984,7 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { 
 
 const plainGroup = L.layerGroup().addTo(map);
 
-// ── Grid clustering ──
-function getPixelGridKey(latlng, zoom) {
-  const pt = map.project(latlng, zoom);
-  const gridSize = 60;
-  return Math.floor(pt.x / gridSize) + ',' + Math.floor(pt.y / gridSize);
-}
+
 
 function formatSales(n) {
   if (!n) return '$0';
@@ -1116,62 +1111,24 @@ function render() {
     }
   }
 
-  // Grid-based clustering
-  const zoom = map.getZoom();
-  const gridSize = 60;
-  const clusters = {};
-
+  // Render individual markers (no clustering)
   filtered.forEach(d => {
-    const latlng = L.latLng(d.lat, d.lng);
-    const pt = map.project(latlng, zoom);
-    const gx = Math.floor(pt.x / gridSize);
-    const gy = Math.floor(pt.y / gridSize);
-    const key = gx + ',' + gy;
-    if (!clusters[key]) clusters[key] = [];
-    clusters[key].push(d);
-  });
-
-  Object.values(clusters).forEach(group => {
-    if (group.length === 1 || zoom >= 13) {
-      group.forEach(d => {
-        const eff = getEffective(d);
-        const cls = getMarkerClass(d);
-        const starHTML = eff.star ? '<span class="star-overlay">&#x2B50;</span>' : '';
-        const ringHTML = eff.ring ? '<span class="ring-overlay"></span>' : '';
-        const icon = L.divIcon({
-          className: '',
-          html: \`<div class="map-marker \${cls} \${selectedIdx === d._idx ? 'selected' : ''}" data-idx="\${d._idx}">\${starHTML}\${ringHTML}</div>\`,
-          iconSize: [14,14], iconAnchor: [7,7]
-        });
-        const marker = L.marker([d.lat, d.lng], { icon, zIndexOffset: d.status==='active'?200:d.status==='lapsed'?100:d.grade==='A'?50:0 })
-          .bindPopup(buildPopup(d, d._idx), { maxWidth: 360 });
-        marker.on('click', () => selectAccount(d._idx));
-        plainGroup.addLayer(marker);
-        markers.push({ marker, idx: d._idx });
-      });
-    } else {
-      // Show cluster bubble
-      const avgLat = group.reduce((s,d) => s+d.lat, 0) / group.length;
-      const avgLng = group.reduce((s,d) => s+d.lng, 0) / group.length;
-      const n = group.length;
-      const sz = n < 10 ? 30 : n < 50 ? 36 : 44;
-      const icon = L.divIcon({
-        className: '',
-        html: \`<div class="my-cluster" style="width:\${sz}px;height:\${sz}px;font-size:\${sz<36?11:13}px">\${n}</div>\`,
-        iconSize: [sz,sz], iconAnchor: [sz/2,sz/2]
-      });
-      const marker = L.marker([avgLat, avgLng], { icon });
-      marker.on('click', () => {
-        const bounds = L.latLngBounds(group.map(d => [d.lat, d.lng]));
-        map.fitBounds(bounds.pad(0.1));
-      });
-      plainGroup.addLayer(marker);
-    }
+    const eff = getEffective(d);
+    const cls = getMarkerClass(d);
+    const starHTML = eff.star ? '<span class="star-overlay">&#x2B50;</span>' : '';
+    const ringHTML = eff.ring ? '<span class="ring-overlay"></span>' : '';
+    const icon = L.divIcon({
+      className: '',
+      html: \`<div class="map-marker \${cls} \${selectedIdx === d._idx ? 'selected' : ''}" data-idx="\${d._idx}">\${starHTML}\${ringHTML}</div>\`,
+      iconSize: [14,14], iconAnchor: [7,7]
+    });
+    const marker = L.marker([d.lat, d.lng], { icon, zIndexOffset: d.status==='active'?200:d.status==='lapsed'?100:d.grade==='A'?50:0 })
+      .bindPopup(buildPopup(d, d._idx), { maxWidth: 360 });
+    marker.on('click', () => selectAccount(d._idx));
+    plainGroup.addLayer(marker);
+    markers.push({ marker, idx: d._idx });
   });
 }
-
-// Re-render clusters on zoom
-map.on('zoomend', render);
 
 function selectAccount(idx) {
   selectedIdx = idx;
@@ -1833,53 +1790,24 @@ function render() {
   document.getElementById('s-lapsed').textContent = lapsedCount;
   document.getElementById('s-prospect').textContent = prospectCount;
 
-  // Grid clustering
-  const zoom = map.getZoom();
-  const gridSize = 55;
-  const clusters = {};
+  // Render individual markers (no clustering)
   filtered.forEach(d => {
-    const pt = map.project([d.lat, d.lng], zoom);
-    const key = Math.floor(pt.x/gridSize) + ',' + Math.floor(pt.y/gridSize);
-    if (!clusters[key]) clusters[key] = [];
-    clusters[key].push(d);
-  });
-
-  Object.values(clusters).forEach(group => {
-    if (group.length === 1 || zoom >= 13) {
-      group.forEach(d => {
-        const eff = getEffective(d);
-        const cls = getMarkerClass(d);
-        const starHTML = eff.star ? '<span class="star-overlay">&#x2B50;</span>' : '';
-        const ringHTML = eff.ring ? '<span class="ring-overlay"></span>' : '';
-        const icon = L.divIcon({
-          className:'',
-          html:\`<div class="map-marker \${cls}">\${starHTML}\${ringHTML}</div>\`,
-          iconSize:[12,12], iconAnchor:[6,6]
-        });
-        const m = L.marker([d.lat, d.lng], { icon, zIndexOffset: d.status==='active'?200:d.status==='lapsed'?100:d.grade==='A'?50:0 })
-          .bindPopup(buildPopup(d, d._idx), { maxWidth:300 });
-        m.on('click', () => { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebar-overlay').classList.remove('open'); });
-        plainGroup.addLayer(m);
-        markers.push({ m, idx: d._idx });
-      });
-    } else {
-      const avgLat = group.reduce((s,d)=>s+d.lat,0)/group.length;
-      const avgLng = group.reduce((s,d)=>s+d.lng,0)/group.length;
-      const n = group.length;
-      const sz = n<10?28:n<50?34:42;
-      const icon = L.divIcon({
-        className:'',
-        html:\`<div class="my-cluster" style="width:\${sz}px;height:\${sz}px;font-size:\${sz<34?10:12}px">\${n}</div>\`,
-        iconSize:[sz,sz], iconAnchor:[sz/2,sz/2]
-      });
-      const m = L.marker([avgLat, avgLng], { icon });
-      m.on('click', () => { map.fitBounds(L.latLngBounds(group.map(d=>[d.lat,d.lng])).pad(0.1)); });
-      plainGroup.addLayer(m);
-    }
+    const eff = getEffective(d);
+    const cls = getMarkerClass(d);
+    const starHTML = eff.star ? '<span class="star-overlay">&#x2B50;</span>' : '';
+    const ringHTML = eff.ring ? '<span class="ring-overlay"></span>' : '';
+    const icon = L.divIcon({
+      className:'',
+      html:\`<div class="map-marker \${cls}">\${starHTML}\${ringHTML}</div>\`,
+      iconSize:[12,12], iconAnchor:[6,6]
+    });
+    const m = L.marker([d.lat, d.lng], { icon, zIndexOffset: d.status==='active'?200:d.status==='lapsed'?100:d.grade==='A'?50:0 })
+      .bindPopup(buildPopup(d, d._idx), { maxWidth:300 });
+    m.on('click', () => { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebar-overlay').classList.remove('open'); });
+    plainGroup.addLayer(m);
+    markers.push({ m, idx: d._idx });
   });
 }
-
-map.on('zoomend', render);
 
 // ── Sidebar ──
 window.toggleSidebar = function() {
