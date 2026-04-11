@@ -327,6 +327,14 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
           <div class="pill" data-val="2+">2+</div>
         </div>
       </div>
+      <div class="filter-group">
+        <span class="filter-label">Open Opportunities</span>
+        <div class="filter-pills" id="opps-filter">
+          <div class="pill active" data-val="ALL">All</div>
+          <div class="pill" data-val="Y">Has Opps</div>
+          <div class="pill" data-val="N">None</div>
+        </div>
+      </div>
     </div>
     <div class="results-header">
       <div class="results-count">Showing <span id="result-count">0</span> accounts</div>
@@ -475,7 +483,7 @@ function getEffective(d, idx) {
 }
 
 // ── State ──
-let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', search:'' };
+let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', search:'' };
 let markers = [];
 let selectedIdx = null;
 
@@ -532,6 +540,11 @@ function matchesFilters(d) {
     if (filters.contacts === '0' && cnt !== 0) return false;
     if (filters.contacts === '1' && cnt !== 1) return false;
     if (filters.contacts === '2+' && cnt < 2) return false;
+  }
+  if (filters.opps !== 'ALL') {
+    const hasOpps = eff.oppNote && eff.oppNote.length > 0;
+    if (filters.opps === 'Y' && !hasOpps) return false;
+    if (filters.opps === 'N' && hasOpps) return false;
   }
   if (filters.search) {
     const s = filters.search.toLowerCase();
@@ -698,6 +711,7 @@ setupPillGroup('vert-filter', 'vert');
 setupPillGroup('health-filter', 'health');
 setupPillGroup('upgrade-filter', 'upgrade');
 setupPillGroup('contacts-filter', 'contacts');
+setupPillGroup('opps-filter', 'opps');
 
 document.getElementById('search').addEventListener('input', e => {
   filters.search = e.target.value.trim();
@@ -706,7 +720,7 @@ document.getElementById('search').addEventListener('input', e => {
 });
 
 document.getElementById('clear-filters').addEventListener('click', () => {
-  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', search:'' };
+  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', search:'' };
   document.getElementById('search').value = '';
   document.querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.val === 'ALL'));
   selectedIdx = null;
