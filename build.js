@@ -264,17 +264,11 @@ function getStatus(r) {
   // Any account with revenue in the last 12 months = Active Customer (gold)
   if (rev012 > 0) return 'active';
 
-  // Type says Active Customer but no recent revenue
-  if (type === 'Active Customer') {
-    // Had revenue 12-24 months ago or recent activity = still active
-    if (rev1224 > 0) return 'active';
-    if (lastActivity && lastActivity >= twoYearsAgo) return 'active';
-    // No revenue and no recent activity = lapsed
-    return 'lapsed';
-  }
+  // Type says Active Customer but zero revenue last 12 months = Lapsed (red-orange)
+  if (type === 'Active Customer') return 'lapsed';
 
-  // Not active, but had revenue 12-24 months ago = lapsed (bought before, gone quiet)
-  if (rev1224 > 0 && lastActivity && lastActivity < twoYearsAgo) return 'lapsed';
+  // Not an active customer, but had revenue 12-24 months ago = also lapsed
+  if (rev1224 > 0) return 'lapsed';
 
   return 'prospect';
 }
