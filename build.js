@@ -1106,16 +1106,24 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
         </div>
       </div>
       <div class="filter-group">
-        <span class="filter-label">Vertical</span>
+        <span class="filter-label">Vertical / Industry</span>
         <div class="filter-pills" id="vert-filter">
           <div class="pill active" data-val="ALL">All</div>
-          <div class="pill" data-val="Food">Food & Bev</div>
+          <div class="pill" data-val="Food">Food</div>
+          <div class="pill" data-val="Beverage">Beverage</div>
+          <div class="pill" data-val="PetFood">Pet Food</div>
           <div class="pill" data-val="Pharma">Pharma</div>
           <div class="pill" data-val="Packaging">Packaging</div>
-          <div class="pill" data-val="Automotive">Auto</div>
+          <div class="pill" data-val="Aero">Aero/Defense</div>
+          <div class="pill" data-val="Auto">Auto/Trans</div>
+          <div class="pill" data-val="Chemical">Chemical</div>
           <div class="pill" data-val="Plastics">Plastics</div>
+          <div class="pill" data-val="Building">Building</div>
+          <div class="pill" data-val="Industrial">Industrial</div>
+          <div class="pill" data-val="Electronics">Electronics</div>
           <div class="pill" data-val="Consumer">CPG</div>
-          <div class="pill" data-val="Beverage">Beverage</div>
+          <div class="pill" data-val="Graphics">Graphics</div>
+          <div class="pill" data-val="Other">Other</div>
         </div>
       </div>
       <div class="filter-group">
@@ -1311,13 +1319,21 @@ function matchesFilters(d) {
   if (filters.vert !== 'ALL') {
     const v = eff.vertical.toLowerCase();
     const fv = filters.vert.toLowerCase();
-    if (fv==='food' && !v.includes('food') && !v.includes('bev') && !v.includes('ag') && !v.includes('pet')) return false;
-    if (fv==='pharma' && !v.includes('pharma') && !v.includes('medical') && !v.includes('biotech') && !v.includes('animal health')) return false;
-    if (fv==='packaging' && !v.includes('packag')) return false;
-    if (fv==='automotive' && !v.includes('auto') && !v.includes('transport') && !v.includes('aero')) return false;
-    if (fv==='plastics' && !v.includes('plastic') && !v.includes('rubber')) return false;
-    if (fv==='consumer' && !v.includes('consumer') && !v.includes('cpg')) return false;
-    if (fv==='beverage' && !v.includes('beverage') && !v.includes('brew')) return false;
+    if (fv==='food' && !v.match(/food|meat|poultry|baked|cereal|fruit|vegetable|frozen|snack|candy|confect|flour|grain|sausage/)) return false;
+    if (fv==='beverage' && !v.match(/beverage|brew|bottl|distill|wine|beer|coffee|coca|soda/)) return false;
+    if (fv==='petfood' && !v.match(/pet|animal feed/)) return false;
+    if (fv==='pharma' && !v.match(/pharma|medical|biotech|animal health|cosmetic|personal care/)) return false;
+    if (fv==='packaging' && !v.match(/packag|container|carton|label/)) return false;
+    if (fv==='aero' && !v.match(/aero|aircraft|aviation|defense|ammunition/)) return false;
+    if (fv==='auto' && !v.match(/auto|transport|vehicle|tire|brake/)) return false;
+    if (fv==='chemical' && !v.match(/chemical|lubricant|paint|adhesive|coating/)) return false;
+    if (fv==='plastics' && !v.match(/plastic|rubber|polymer|extrusion|wire.*cable|cable/)) return false;
+    if (fv==='building' && !v.match(/building|construct|hvac|lighting|furniture|hose/)) return false;
+    if (fv==='industrial' && !v.match(/industrial|equipment|metal|steel|foundry|manufact/)) return false;
+    if (fv==='electronics' && !v.match(/electr|electro|tech/)) return false;
+    if (fv==='consumer' && !v.match(/consumer|cpg/)) return false;
+    if (fv==='graphics' && !v.match(/graphic|print|text|distribut/)) return false;
+    if (fv==='other' && !v.match(/other|unknown|postal|whol/) && !v.match(/^\d/)) return false;
   }
   if (filters.upgrade !== 'ALL') {
     if (filters.upgrade === 'Y' && !eff.upgradeReady) return false;
@@ -1947,16 +1963,24 @@ html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); col
       </div>
     </div>
     <div class="filter-section">
-      <div class="filter-lbl">Vertical</div>
+      <div class="filter-lbl">Vertical / Industry</div>
       <div class="filter-pills" id="f-vert">
         <div class="pill active" data-val="ALL">All</div>
-        <div class="pill" data-val="Food">Food & Bev</div>
+        <div class="pill" data-val="Food">Food</div>
+        <div class="pill" data-val="Beverage">Bev</div>
+        <div class="pill" data-val="PetFood">Pet</div>
         <div class="pill" data-val="Pharma">Pharma</div>
-        <div class="pill" data-val="Packaging">Packaging</div>
-        <div class="pill" data-val="Automotive">Auto</div>
-        <div class="pill" data-val="Plastics">Plastics</div>
+        <div class="pill" data-val="Packaging">Pkg</div>
+        <div class="pill" data-val="Aero">Aero</div>
+        <div class="pill" data-val="Auto">Auto</div>
+        <div class="pill" data-val="Chemical">Chem</div>
+        <div class="pill" data-val="Plastics">Plastic</div>
+        <div class="pill" data-val="Building">Build</div>
+        <div class="pill" data-val="Industrial">Ind</div>
+        <div class="pill" data-val="Electronics">Elec</div>
         <div class="pill" data-val="Consumer">CPG</div>
-        <div class="pill" data-val="Beverage">Beverage</div>
+        <div class="pill" data-val="Graphics">Graph</div>
+        <div class="pill" data-val="Other">Other</div>
       </div>
     </div>
     <div class="filter-section">
@@ -2121,13 +2145,21 @@ function matchesFilters(d) {
   if (filters.status !== 'ALL' && eff.status !== filters.status) return false;
   if (filters.vert !== 'ALL') {
     const v = eff.vertical.toLowerCase(), fv = filters.vert.toLowerCase();
-    if (fv==='food' && !v.includes('food') && !v.includes('bev') && !v.includes('ag') && !v.includes('pet')) return false;
-    if (fv==='pharma' && !v.includes('pharma') && !v.includes('medical') && !v.includes('biotech') && !v.includes('animal health')) return false;
-    if (fv==='packaging' && !v.includes('packag')) return false;
-    if (fv==='automotive' && !v.includes('auto') && !v.includes('transport') && !v.includes('aero')) return false;
-    if (fv==='plastics' && !v.includes('plastic') && !v.includes('rubber')) return false;
-    if (fv==='consumer' && !v.includes('consumer') && !v.includes('cpg')) return false;
-    if (fv==='beverage' && !v.includes('beverage') && !v.includes('brew')) return false;
+    if (fv==='food' && !v.match(/food|meat|poultry|baked|cereal|fruit|vegetable|frozen|snack|candy|confect|flour|grain|sausage/)) return false;
+    if (fv==='beverage' && !v.match(/beverage|brew|bottl|distill|wine|beer|coffee|coca|soda/)) return false;
+    if (fv==='petfood' && !v.match(/pet|animal feed/)) return false;
+    if (fv==='pharma' && !v.match(/pharma|medical|biotech|animal health|cosmetic|personal care/)) return false;
+    if (fv==='packaging' && !v.match(/packag|container|carton|label/)) return false;
+    if (fv==='aero' && !v.match(/aero|aircraft|aviation|defense|ammunition/)) return false;
+    if (fv==='auto' && !v.match(/auto|transport|vehicle|tire|brake/)) return false;
+    if (fv==='chemical' && !v.match(/chemical|lubricant|paint|adhesive|coating/)) return false;
+    if (fv==='plastics' && !v.match(/plastic|rubber|polymer|extrusion|wire.*cable|cable/)) return false;
+    if (fv==='building' && !v.match(/building|construct|hvac|lighting|furniture|hose/)) return false;
+    if (fv==='industrial' && !v.match(/industrial|equipment|metal|steel|foundry|manufact/)) return false;
+    if (fv==='electronics' && !v.match(/electr|electro|tech/)) return false;
+    if (fv==='consumer' && !v.match(/consumer|cpg/)) return false;
+    if (fv==='graphics' && !v.match(/graphic|print|text|distribut/)) return false;
+    if (fv==='other' && !v.match(/other|unknown|postal|whol/) && !v.match(/^\d/)) return false;
   }
   if (filters.upgrade !== 'ALL') {
     if (filters.upgrade === 'Y' && !eff.upgradeReady) return false;
