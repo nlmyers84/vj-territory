@@ -165,7 +165,7 @@ function calcScore(r) {
   // ── CORE: What they do + how big (drives ~70% of grade) ──
 
   // Vertical / industry fit
-  pts += verticalFitScore(r['Vertical'], r['Industry']);
+  pts += verticalFitScore(r['_correctedVertical'] || r['Vertical'], r['Industry']);
 
   // Plant size (employees)
   const employees = Number(r['Employees']) || 0;
@@ -338,6 +338,22 @@ rows.forEach(r => {
   if (seenKeys.has(dedupKey)) return;
   seenKeys.add(dedupKey);
 
+  // Fix misclassified verticals on the row BEFORE scoring
+  const rawVert = (r['Vertical'] || '').trim().toLowerCase();
+  if (rawVert.match(/^other|^unknown|^\d|^$/) || !rawVert) {
+    const nameLC = name.toLowerCase();
+    if (nameLC.match(/pet\b|petfood|animal feed|purina/)) r['_correctedVertical'] = 'Pet Food & Animal Feed';
+    else if (nameLC.match(/food|bakery|baking|meat|packing co|cheese|candy|confect|snack|pizza|sausage|treats|jerky|gourmet/)) r['_correctedVertical'] = 'Other Food';
+    else if (nameLC.match(/dairy|milk|cream|butter|yogurt/)) r['_correctedVertical'] = 'Dairy & Eggs';
+    else if (nameLC.match(/beverage|brew|bottl|distill|wine|beer|soda|juice|coffee/)) r['_correctedVertical'] = 'Beverage';
+    else if (nameLC.match(/pharma|drug|health|medical|biotech|vaccine/)) r['_correctedVertical'] = 'Pharma & Medical';
+    else if (nameLC.match(/plastic|rubber|polymer/)) r['_correctedVertical'] = 'Plastics';
+    else if (nameLC.match(/packag|container|carton|box|envelope|label/)) r['_correctedVertical'] = 'Packaging Materials';
+    else if (nameLC.match(/auto|motor[^s]|vehicle|tire|brake|piston/)) r['_correctedVertical'] = 'Aero/Auto';
+    else if (nameLC.match(/aero|aircraft|aviation|aerospace/)) r['_correctedVertical'] = 'Aero/Auto';
+    else if (nameLC.match(/chemical|lubricant|paint|adhesive|coating/)) r['_correctedVertical'] = 'Chemicals';
+  }
+
   const status = getStatus(r);
   const score = calcScore(r);
   const grade = '?'; // assigned later via percentile quartiles
@@ -404,7 +420,7 @@ rows.forEach(r => {
     ['REV_IB_SUP_LPA_12_24_MON_LC', 'REV_IB_PART_LPA_12_24_MON_LC']);
 
   const city = (r['Shipping City'] || '').trim();
-  const vertical = (r['Vertical'] || r['Industry'] || 'Other / Unknown').trim();
+  const vertical = r['_correctedVertical'] || (r['Vertical'] || r['Industry'] || 'Other / Unknown').trim();
 
   // Contacts: merge existing + equipment contact from Excel
   let contacts = [];
