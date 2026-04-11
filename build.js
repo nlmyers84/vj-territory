@@ -256,16 +256,26 @@ function calcScoreOld(d) {
 function getStatus(r) {
   const type = String(r['Type'] || '').trim();
   const rev012 = Number(r['Rev (All) - 0-12 Month Rolling']) || 0;
+  const rev1224 = Number(r['Rev (All) - 12-24 Month Rolling']) || 0;
   const lastActivity = excelDateToJS(r['Last Activity']);
   const now = new Date();
   const twoYearsAgo = new Date(now.getFullYear() - 2, now.getMonth(), now.getDate());
 
+  // Any account with revenue in the last 12 months = Active Customer (gold)
+  if (rev012 > 0) return 'active';
+
+  // Type says Active Customer but no recent revenue
   if (type === 'Active Customer') {
-    if (rev012 > 0) return 'active';
-    // Zero revenue last 12 months — check if lapsed
-    if (lastActivity && lastActivity < twoYearsAgo) return 'lapsed';
-    return 'active'; // still active if recent activity
+    // Had revenue 12-24 months ago or recent activity = still active
+    if (rev1224 > 0) return 'active';
+    if (lastActivity && lastActivity >= twoYearsAgo) return 'active';
+    // No revenue and no recent activity = lapsed
+    return 'lapsed';
   }
+
+  // Not active, but had revenue 12-24 months ago = lapsed (bought before, gone quiet)
+  if (rev1224 > 0 && lastActivity && lastActivity < twoYearsAgo) return 'lapsed';
+
   return 'prospect';
 }
 
@@ -502,7 +512,9 @@ existingData.forEach(d => {
 
   const score = calcScoreOld(d);
   const grade = '?'; // assigned later via percentile quartiles
-  const status = d.status === 'active' ? 'active' : 'prospect';
+  // Any account with sales revenue = active customer (gold on map)
+  const sales = d.sales || 0;
+  const status = (d.status === 'active' || sales > 0) ? 'active' : 'prospect';
 
   const newAcct = {
     company: d.company,
