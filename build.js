@@ -343,8 +343,13 @@ rows.forEach(r => {
   const grade = '?'; // assigned later via percentile quartiles
   const rev012 = Number(r['Rev (All) - 0-12 Month Rolling']) || 0;
   const rev1224 = Number(r['Rev (All) - 12-24 Month Rolling']) || 0;
+  const revYTD = Number(r['Rev (All) - YTD Rolling']) || 0;
+  const revPrvYTD = Number(r['Rev (All) - Prv YTD Rolling']) || 0;
+  const revYOYDiff = Number(r['Rev (All) - YOY Difference']) || 0;
   const trend = parseYOYTrend(r['Rev (All) - YOY Trend']);
   const upgradeReady = String(r['Upgrade Readiness'] || 'N').toUpperCase().trim() === 'Y';
+  const isContractCustomer = r['Contract Customer'] === '1';
+  const breakFixCount = Number(r['Break Fix WOLI Count']) || 0;
   const compCIJ = Number(r['No of installed competitive CIJ Printers']) || 0;
   const compLaser = Number(r['No of installed competitive LASER']) || 0;
   const prodLines = Number(r['Total Number of Active Printers(VJDB)']) || Number(r['Total Number of Active Printers_CR']) || 0;
@@ -441,14 +446,21 @@ rows.forEach(r => {
     score,
     rev012: Math.round(rev012),
     rev1224: Math.round(rev1224),
+    revYTD: Math.round(revYTD),
+    revPrvYTD: Math.round(revPrvYTD),
+    revYOYDiff: Math.round(revYOYDiff),
     trend,
     upgradeReady,
+    isContractCustomer,
+    breakFixCount,
     compCIJ,
     compLaser,
     prodLines,
     vjEquip,
     techActivity,
     oppNote,
+    healthGrade: null, // computed below for active accounts
+    healthScore: 0,
     contacts
   });
 });
@@ -612,6 +624,91 @@ accounts.forEach(a => {
   else if (a.score >= q75) a.grade = 'C';
   else a.grade = 'D';
 });
+
+// ── 8d. Health grade for active accounts ──
+// Measures account HEALTH (how strong is this relationship?) vs the opportunity
+// grade which measures POTENTIAL. Both grades show on active accounts.
+//
+// Health signals:
+//   Revenue magnitude          — bigger spend = healthier
+//   Revenue trend (YOY)        — growing vs declining
+//   Revenue change %           — how much did they grow/shrink?
+//   Tech breadth               — multiple tech types = deeper relationship
+//   Contract customer           — service contract = sticky
+//   Upgrade readiness           — engaged in refresh cycle
+//   Break fix activity          — using our service = active relationship
+
+const activeAccounts = accounts.filter(a => a.status === 'active');
+activeAccounts.forEach(a => {
+  let hp = 0;
+
+  // Revenue magnitude (bigger wallet share = healthier)
+  if (a.rev012 > 200000) hp += 25;
+  else if (a.rev012 >= 100000) hp += 22;
+  else if (a.rev012 >= 50000) hp += 18;
+  else if (a.rev012 >= 20000) hp += 14;
+  else if (a.rev012 >= 5000) hp += 8;
+  else hp += 3;
+
+  // Revenue trend
+  if (a.trend === 'Rising') hp += 15;
+  else if (a.trend === 'Declining') hp += 0;
+  else hp += 7; // unknown/flat
+
+  // Revenue change % (0-12 vs 12-24)
+  if (a.rev1224 > 0) {
+    const changePct = (a.rev012 - a.rev1224) / a.rev1224 * 100;
+    if (changePct >= 20) hp += 15;       // strong growth
+    else if (changePct >= 0) hp += 10;   // stable/slight growth
+    else if (changePct >= -20) hp += 5;  // slight decline
+    else hp += 0;                         // major decline
+  } else {
+    hp += 10; // new customer (no prior period), neutral
+  }
+
+  // Tech breadth (number of different VJ tech types)
+  const techCount = a.vjEquip ? Object.keys(a.vjEquip).length : 0;
+  if (techCount >= 4) hp += 15;
+  else if (techCount >= 3) hp += 12;
+  else if (techCount >= 2) hp += 8;
+  else if (techCount >= 1) hp += 4;
+
+  // Contract customer = sticky relationship
+  if (a.isContractCustomer) hp += 10;
+
+  // Upgrade readiness = engaged
+  if (a.upgradeReady) hp += 8;
+
+  // Break fix activity = active service relationship
+  if (a.breakFixCount > 0) hp += 7;
+
+  // Production lines (more lines = more opportunity for churn protection)
+  if (a.prodLines >= 20) hp += 10;
+  else if (a.prodLines >= 10) hp += 7;
+  else if (a.prodLines >= 5) hp += 4;
+  else if (a.prodLines >= 1) hp += 2;
+
+  a.healthScore = hp;
+});
+
+// Assign health grades via percentile quartiles (among active accounts only)
+if (activeAccounts.length > 0) {
+  const healthScores = activeAccounts.map(a => a.healthScore).sort((a, b) => b - a);
+  const hq25 = healthScores[Math.floor(healthScores.length * 0.25)];
+  const hq50 = healthScores[Math.floor(healthScores.length * 0.50)];
+  const hq75 = healthScores[Math.floor(healthScores.length * 0.75)];
+
+  console.log(`Health quartile boundaries: A >= ${hq25}, B >= ${hq50}, C >= ${hq75}, D < ${hq75}`);
+
+  activeAccounts.forEach(a => {
+    if (a.healthScore >= hq25) a.healthGrade = 'A';
+    else if (a.healthScore >= hq50) a.healthGrade = 'B';
+    else if (a.healthScore >= hq75) a.healthGrade = 'C';
+    else a.healthGrade = 'D';
+  });
+
+  console.log(`Health grades: A:${activeAccounts.filter(a=>a.healthGrade==='A').length} B:${activeAccounts.filter(a=>a.healthGrade==='B').length} C:${activeAccounts.filter(a=>a.healthGrade==='C').length} D:${activeAccounts.filter(a=>a.healthGrade==='D').length}`);
+}
 
 console.log(`Processed ${accounts.length} accounts (${accounts.length - carriedForward} from Excel/merged, ${carriedForward} carried forward, ${mergedInto} old entries merged into Excel accounts)`);
 console.log(`  Active: ${accounts.filter(a=>a.status==='active').length}`);
@@ -1098,12 +1195,17 @@ function buildPopup(d, idx) {
     <div class="popup-row">&#x1F4CD; <strong>\${eff.address ? eff.address + ', ' : ''}\${eff.city}, \${eff.state}</strong></div>
     <div class="popup-badges">
       <span class="badge \${statusClass || 'badge-vert'}">\${statusLabel}</span>
-      <span class="badge \${gradeClass}">\${eff.grade}-GRADE (\${eff.score}pts)</span>
+      <span class="badge \${gradeClass}">OPP: \${eff.grade} (\${eff.score}pts)</span>
+      \${eff.healthGrade ? \`<span class="badge badge-\${eff.healthGrade === 'A' ? 'a' : eff.healthGrade === 'B' ? 'b' : eff.healthGrade === 'C' ? 'c' : 'd'}">HEALTH: \${eff.healthGrade} (\${eff.healthScore}pts)</span>\` : ''}
       <span class="badge badge-vert">\${eff.vertical}</span>
     </div>
     <div class="popup-details">
-      \${eff.rev012 ? \`<div class="popup-detail-row"><span>Rev 12mo</span><span class="val green">\${formatSales(eff.rev012)}</span></div>\` : ''}
+      \${eff.rev012 ? \`<div class="popup-detail-row"><span>Rev 0-12mo</span><span class="val green">\${formatSales(eff.rev012)}</span></div>\` : ''}
+      \${eff.rev1224 ? \`<div class="popup-detail-row"><span>Rev 12-24mo</span><span class="val">\${formatSales(eff.rev1224)}</span></div>\` : ''}
+      \${eff.revPrvYTD ? \`<div class="popup-detail-row"><span>Prev YTD</span><span class="val">\${formatSales(eff.revPrvYTD)}</span></div>\` : ''}
+      \${eff.revYOYDiff ? \`<div class="popup-detail-row"><span>YOY Change</span><span class="val \${eff.revYOYDiff > 0 ? 'green' : 'red'}">\${eff.revYOYDiff > 0 ? '+' : ''}\${formatSales(eff.revYOYDiff)}</span></div>\` : ''}
       <div class="popup-detail-row"><span>YOY Trend</span><span class="val">\${trendIcon}</span></div>
+      \${eff.isContractCustomer ? '<div class="popup-detail-row"><span>Service Contract</span><span class="val green">Yes</span></div>' : ''}
       <div class="popup-detail-row"><span>Upgrade Ready</span><span class="val">\${eff.upgradeReady ? 'Yes' : 'No'}</span></div>
       <div class="popup-detail-row"><span>VJ Systems</span><span class="val">\${eff.prodLines}</span></div>
       \${eff.vjEquip && Object.keys(eff.vjEquip).length > 0 ? Object.entries(eff.vjEquip).map(([tech, count]) => \`<div class="popup-detail-row" style="padding-left:12px"><span>\${tech}</span><span class="val">\${count}</span></div>\`).join('') : ''}
@@ -1820,11 +1922,14 @@ function buildPopup(d, idx) {
     <div class="popup-row">&#x1F4CD; \${eff.address ? eff.address + ', ' : ''}\${eff.city}, \${eff.state}</div>
     <div class="popup-badges">
       <span class="badge \${statusClass || 'badge-vert'}">\${statusLabel}</span>
-      <span class="badge \${gradeClass}">\${eff.grade}-GRADE (\${eff.score}pts)</span>
+      <span class="badge \${gradeClass}">OPP: \${eff.grade}</span>
+      \${eff.healthGrade ? \`<span class="badge badge-\${eff.healthGrade === 'A' ? 'a' : eff.healthGrade === 'B' ? 'b' : eff.healthGrade === 'C' ? 'c' : 'd'}">HEALTH: \${eff.healthGrade}</span>\` : ''}
       <span class="badge badge-vert">\${eff.vertical}</span>
     </div>
     <div class="popup-details">
-      \${eff.rev012 ? \`<div class="popup-detail-row"><span>Rev 12mo</span><span class="val green">\${formatSales(eff.rev012)}</span></div>\` : ''}
+      \${eff.rev012 ? \`<div class="popup-detail-row"><span>Rev 0-12mo</span><span class="val green">\${formatSales(eff.rev012)}</span></div>\` : ''}
+      \${eff.rev1224 ? \`<div class="popup-detail-row"><span>Rev 12-24mo</span><span class="val">\${formatSales(eff.rev1224)}</span></div>\` : ''}
+      \${eff.revYOYDiff ? \`<div class="popup-detail-row"><span>YOY Change</span><span class="val \${eff.revYOYDiff > 0 ? 'green' : 'red'}">\${eff.revYOYDiff > 0 ? '+' : ''}\${formatSales(eff.revYOYDiff)}</span></div>\` : ''}
       <div class="popup-detail-row"><span>YOY</span><span class="val">\${trendIcon}</span></div>
       <div class="popup-detail-row"><span>Upgrade</span><span class="val">\${eff.upgradeReady ? 'Yes' : 'No'}</span></div>
       <div class="popup-detail-row"><span>VJ Systems</span><span class="val">\${eff.prodLines}</span></div>
