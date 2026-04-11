@@ -412,7 +412,7 @@ rows.forEach(r => {
   // Keep existing contacts (up to 5) — use fuzzy matching
   const existingContacts = findExistingContacts(name, addr, city);
   if (existingContacts) {
-    contacts = existingContacts.slice(0, 5);
+    contacts = existingContacts.slice(0, 10);
   }
 
   // Add Equipment Contact from Excel
@@ -476,8 +476,7 @@ rows.forEach(r => {
 function normName(name) {
   return name.toLowerCase()
     .replace(/['']/g, '')
-    // Strip common suffixes and parenthetical/dash annotations
-    .replace(/\b(inc|llc|corp|co|company|corporation|ltd|lp)\b\.?/g, '')
+    .replace(/\b(inc|llc|corp|co|company|corporation|ltd|lp|group|enterprises|industries|international|america|americas|usa|us|north america)\b\.?/g, '')
     .replace(/\s*[—–-]\s*.*(new|plant|facility|division|div|site|loc|bldg|building).*$/i, '')
     .replace(/\s*\(.*?\)\s*/g, ' ')
     .replace(/[^a-z0-9 ]/g, '')
@@ -485,89 +484,135 @@ function normName(name) {
     .trim();
 }
 
-// Build lookup: normName + city -> array of account indices in accounts[]
-const accountsByNormNameCity = {};
+// Extract the "core" name — first 1-2 significant words (for brand-name matching)
+// e.g. "Berry Global" and "Berry Plastics Corp" both -> "berry"
+function coreName(name) {
+  const norm = normName(name);
+  const words = norm.split(' ').filter(w => w.length > 2);
+  // Return first 1 word for short names, first 2 for longer
+  return words.slice(0, words.length <= 3 ? 1 : 2).join(' ');
+}
+
+// Build multiple lookup indexes for matching
+const accountsByNormNameCity = {};   // normName|city -> [indices]
+const accountsByCoreNameCity = {};   // coreName|city -> [indices]
+const accountsByNormName = {};       // normName -> [indices]
+
 accounts.forEach((a, idx) => {
-  const key = normName(a.company) + '|' + a.city.toLowerCase().trim();
-  if (!accountsByNormNameCity[key]) accountsByNormNameCity[key] = [];
-  accountsByNormNameCity[key].push(idx);
+  const city = a.city.toLowerCase().trim();
+  const nn = normName(a.company);
+  const cn = coreName(a.company);
+
+  const key1 = nn + '|' + city;
+  if (!accountsByNormNameCity[key1]) accountsByNormNameCity[key1] = [];
+  accountsByNormNameCity[key1].push(idx);
+
+  const key2 = cn + '|' + city;
+  if (!accountsByCoreNameCity[key2]) accountsByCoreNameCity[key2] = [];
+  accountsByCoreNameCity[key2].push(idx);
+
+  if (!accountsByNormName[nn]) accountsByNormName[nn] = [];
+  accountsByNormName[nn].push(idx);
 });
+
+// Helper: merge old contacts into an existing account
+function mergeContacts(existing, oldContacts) {
+  const existingNames = new Set(existing.contacts.map(c => c.name.toLowerCase()));
+  const newContacts = oldContacts.filter(c => !existingNames.has(c.name.toLowerCase()));
+  const totalSlots = 10 - existing.contacts.filter(c => c.title !== 'Equipment Contact').length;
+  if (totalSlots > 0 && newContacts.length > 0) {
+    const equipIdx = existing.contacts.findIndex(c => c.title === 'Equipment Contact');
+    const toAdd = newContacts.slice(0, totalSlots);
+    if (equipIdx >= 0) {
+      existing.contacts.splice(equipIdx, 0, ...toAdd);
+    } else {
+      existing.contacts.push(...toAdd);
+    }
+    return true;
+  }
+  return false;
+}
+
+// Helper: find best match from a list of candidate indices (prefer matching address)
+function pickBest(indices, oldAddr) {
+  if (indices.length === 1) return indices[0];
+  const addr = (oldAddr || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+  for (const idx of indices) {
+    const exAddr = (accounts[idx].address || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+    if (exAddr === addr || exAddr.includes(addr) || addr.includes(exAddr)) return idx;
+  }
+  return indices[0];
+}
 
 let carriedForward = 0;
 let mergedInto = 0;
 
 existingData.forEach(d => {
-  // Only carry forward KS/MO
   if (d.state !== 'KS' && d.state !== 'MO') return;
-  // Skip if no coords
   if (!d.lat || !d.lng) return;
-  // Skip if no contacts (nothing to carry forward)
   if (!d.contacts || d.contacts.length === 0) return;
 
   const oldNorm = normName(d.company);
+  const oldCore = coreName(d.company);
   const oldCity = (d.city || '').toLowerCase().trim();
 
-  // Try to find a matching Excel account by normalized name + city
-  const key = oldNorm + '|' + oldCity;
-  const matchIndices = accountsByNormNameCity[key];
-
-  if (matchIndices && matchIndices.length > 0) {
-    // Merge contacts into the best matching Excel account (first match, or one with same address)
-    let bestIdx = matchIndices[0];
-    // Prefer matching address if possible
-    const oldAddr = (d.address || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
-    for (const idx of matchIndices) {
-      const exAddr = (accounts[idx].address || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
-      if (exAddr === oldAddr || exAddr.includes(oldAddr) || oldAddr.includes(exAddr)) {
-        bestIdx = idx;
-        break;
-      }
-    }
-
-    // Merge: add old contacts that aren't already present (by name)
-    const existing = accounts[bestIdx];
-    const existingNames = new Set(existing.contacts.map(c => c.name.toLowerCase()));
-    const oldContacts = d.contacts.filter(c => !existingNames.has(c.name.toLowerCase()));
-    // Keep up to 5 old contacts + existing
-    const totalSlots = 5 - existing.contacts.filter(c => c.title !== 'Equipment Contact').length;
-    if (totalSlots > 0 && oldContacts.length > 0) {
-      // Insert old contacts before Equipment Contact
-      const equipIdx = existing.contacts.findIndex(c => c.title === 'Equipment Contact');
-      const toAdd = oldContacts.slice(0, totalSlots);
-      if (equipIdx >= 0) {
-        existing.contacts.splice(equipIdx, 0, ...toAdd);
-      } else {
-        existing.contacts.push(...toAdd);
-      }
-      mergedInto++;
-    }
+  // Strategy 1: exact normalized name + city
+  const key1 = oldNorm + '|' + oldCity;
+  if (accountsByNormNameCity[key1]) {
+    const bestIdx = pickBest(accountsByNormNameCity[key1], d.address);
+    if (mergeContacts(accounts[bestIdx], d.contacts)) mergedInto++;
     return;
   }
 
-  // No match — also try normName only (if unique location)
-  const nameOnlyMatches = [];
-  Object.keys(accountsByNormNameCity).forEach(k => {
-    if (k.startsWith(oldNorm + '|')) {
-      accountsByNormNameCity[k].forEach(idx => nameOnlyMatches.push(idx));
-    }
-  });
+  // Strategy 2: core name + city (catches "Berry Global" -> "Berry Plastics")
+  const key2 = oldCore + '|' + oldCity;
+  if (accountsByCoreNameCity[key2] && accountsByCoreNameCity[key2].length <= 3) {
+    const bestIdx = pickBest(accountsByCoreNameCity[key2], d.address);
+    if (mergeContacts(accounts[bestIdx], d.contacts)) mergedInto++;
+    return;
+  }
 
-  // If there's exactly one location for this company, merge there
-  if (nameOnlyMatches.length === 1) {
-    const existing = accounts[nameOnlyMatches[0]];
-    const existingNames = new Set(existing.contacts.map(c => c.name.toLowerCase()));
-    const oldContacts = d.contacts.filter(c => !existingNames.has(c.name.toLowerCase()));
-    const totalSlots = 5 - existing.contacts.filter(c => c.title !== 'Equipment Contact').length;
-    if (totalSlots > 0 && oldContacts.length > 0) {
-      const equipIdx = existing.contacts.findIndex(c => c.title === 'Equipment Contact');
-      const toAdd = oldContacts.slice(0, totalSlots);
-      if (equipIdx >= 0) {
-        existing.contacts.splice(equipIdx, 0, ...toAdd);
-      } else {
-        existing.contacts.push(...toAdd);
-      }
-      mergedInto++;
+  // Strategy 3: normalized name only (any city, if unique)
+  if (accountsByNormName[oldNorm] && accountsByNormName[oldNorm].length === 1) {
+    if (mergeContacts(accounts[accountsByNormName[oldNorm][0]], d.contacts)) mergedInto++;
+    return;
+  }
+
+  // Strategy 4: check all accounts in same city for any strong word overlap
+  const cityAccounts = Object.entries(accountsByNormNameCity)
+    .filter(([k]) => k.endsWith('|' + oldCity))
+    .flatMap(([, indices]) => indices);
+
+  const oldWords = new Set(oldNorm.split(' ').filter(w => w.length > 2));
+  let bestCityMatch = null;
+  let bestCityScore = 0;
+
+  for (const idx of cityAccounts) {
+    const exNorm = normName(accounts[idx].company);
+    let score = 0;
+
+    // Substring containment (strong signal)
+    if (exNorm.includes(oldNorm) || oldNorm.includes(exNorm)) score += 5;
+
+    // Shared significant words
+    const exWords = new Set(exNorm.split(' ').filter(w => w.length > 2));
+    let shared = 0;
+    oldWords.forEach(w => { if (exWords.has(w)) shared++; });
+    score += shared * 2;
+
+    // Core name match
+    const exCore = coreName(accounts[idx].company);
+    if (oldCore === exCore) score += 3;
+
+    if (score > bestCityScore) {
+      bestCityScore = score;
+      bestCityMatch = idx;
     }
+  }
+
+  // Require at least 2 shared significant words OR substring match
+  if (bestCityMatch !== null && bestCityScore >= 4) {
+    if (mergeContacts(accounts[bestCityMatch], d.contacts)) mergedInto++;
     return;
   }
 
