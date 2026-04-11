@@ -104,63 +104,136 @@ function parseYOYTrend(val) {
   return 'unknown';
 }
 
-// Grade points for 80-20 segmentation / lead rating
-function letterPts(val) {
-  if (!val) return 0;
-  const u = String(val).toUpperCase().trim();
-  if (u === 'A') return 4;
-  if (u === 'B') return 3;
-  if (u === 'C') return 2;
-  if (u === 'D') return 1;
+// ── 5. Opportunity-based scoring ──
+// Grades accounts on additional opportunity potential using percentile-based
+// quartiles so A/B/C/D are roughly evenly distributed.
+//
+// Signals (weighted by predictive value for marking/coding opportunity):
+//   Plant size (employees)         — larger plant = more production lines
+//   Company revenue banding        — bigger company = more sites & volume
+//   Industry fit                   — manufacturing is core market
+//   Competitive printer installs   — PROVEN need for marking/coding
+//   VJ installed base              — existing relationship, expansion potential
+//   Current VJ revenue             — wallet share growth opportunity
+//   80-20 Segmentation             — Videojet's own account ranking
+//   AP Potential Segmentation      — aftermarket potential (XL/L/M/S)
+//   Upgrade Readiness              — near-term equipment opportunity
+//   Open Opportunities             — active sales engagement
+
+function revBandToScore(band) {
+  if (!band) return 0;
+  if (band.includes('5B+') || band.includes('1B-5B')) return 15;
+  if (band.includes('500M-1B') || band.includes('250M-500M')) return 14;
+  if (band.includes('100M-250M')) return 13;
+  if (band.includes('50M-100M')) return 12;
+  if (band.includes('25M-50M')) return 10;
+  if (band.includes('10M-25M')) return 8;
+  if (band.includes('5M-10M')) return 6;
+  if (band.includes('1M-5M')) return 3;
+  if (band.includes('0M-1M')) return 1;
   return 0;
 }
 
-// ── 5. Calculate custom score ──
 function calcScore(r) {
   let pts = 0;
 
-  // 80-20 Segmentation
-  pts += letterPts(r['80-20 Segmentation']);
+  // Plant size / employee count (proxy for production scale)
+  const employees = Number(r['Employees']) || 0;
+  if (employees >= 500) pts += 20;
+  else if (employees >= 200) pts += 16;
+  else if (employees >= 100) pts += 13;
+  else if (employees >= 50) pts += 10;
+  else if (employees >= 20) pts += 6;
+  else if (employees >= 5) pts += 3;
 
-  // Account Lead Rating (for prospects mainly, but include for all)
-  pts += letterPts(r['Account Lead Rating']);
+  // Company annual revenue banding
+  pts += revBandToScore(r['Annual Revenue Banding - USD']);
 
-  // Rev All YOY Trend
-  const trend = parseYOYTrend(r['Rev (All) - YOY Trend']);
-  if (trend === 'Rising') pts += 3;
-  else if (trend === 'Declining') pts += 0;
-  else pts += 1; // unknown
+  // Industry fit — manufacturing = core marking/coding market
+  const industry = (r['Industry'] || '').toLowerCase();
+  if (industry.includes('manufact')) pts += 10;
+  else if (industry.match(/mineral|mining|agriculture|food|pharma|chemical/)) pts += 7;
+  else if (industry.match(/retail|transport/)) pts += 3;
 
-  // Upgrade Readiness
-  const ur = String(r['Upgrade Readiness'] || '').toUpperCase().trim();
-  if (ur === 'Y') pts += 3;
+  // Competitive installs = PROVEN need for marking/coding at this site
+  const compTotal = Number(r['Total number of Competitive Printers']) || 0;
+  if (compTotal > 10) pts += 20;
+  else if (compTotal >= 5) pts += 15;
+  else if (compTotal >= 1) pts += 10;
 
-  // Competitive CIJ
-  const compCIJ = Number(r['No of installed competitive CIJ Printers']) || 0;
-  if (compCIJ > 5) pts += 3;
-  else if (compCIJ >= 1) pts += 2;
+  // VJ installed base = expansion opportunity
+  const vjPrinters = Number(r['Total Number of Active Printers(VJDB)']) || 0;
+  if (vjPrinters >= 10) pts += 15;
+  else if (vjPrinters >= 5) pts += 12;
+  else if (vjPrinters >= 1) pts += 8;
 
-  // Competitive LASER
-  const compLaser = Number(r['No of installed competitive LASER']) || 0;
-  if (compLaser > 2) pts += 2;
-  else if (compLaser >= 1) pts += 1;
-
-  // Rev All 0-12 Month Rolling
+  // Current VJ revenue (wallet share growth)
   const rev012 = Number(r['Rev (All) - 0-12 Month Rolling']) || 0;
-  if (rev012 > 100000) pts += 4;
-  else if (rev012 >= 50000) pts += 3;
-  else if (rev012 >= 10000) pts += 2;
-  else if (rev012 > 0) pts += 1;
+  if (rev012 > 100000) pts += 12;
+  else if (rev012 >= 50000) pts += 10;
+  else if (rev012 >= 10000) pts += 7;
+  else if (rev012 > 0) pts += 4;
+
+  // 80-20 Segmentation (Videojet's own ranking)
+  const seg = (r['80-20 Segmentation'] || '').toUpperCase().trim();
+  if (seg === 'A') pts += 10;
+  else if (seg === 'B') pts += 7;
+  else if (seg === 'C') pts += 4;
+  else if (seg === 'D') pts += 2;
+
+  // AP Potential Segmentation (aftermarket potential)
+  const apSeg = (r['AP Potential Segmentation'] || '').toUpperCase().trim();
+  if (apSeg === 'XL') pts += 10;
+  else if (apSeg === 'L') pts += 7;
+  else if (apSeg === 'M') pts += 5;
+  else if (apSeg === 'S') pts += 3;
+
+  // Upgrade Readiness — near-term equipment opportunity
+  if (String(r['Upgrade Readiness'] || '').toUpperCase().trim() === 'Y') pts += 8;
+
+  // Open Opportunities — active sales engagement
+  if ((Number(r['# of Open Opportunities']) || 0) > 0) pts += 5;
 
   return pts;
 }
 
-function scoreToGrade(score) {
-  if (score >= 15) return 'A';
-  if (score >= 10) return 'B';
-  if (score >= 5) return 'C';
-  return 'D';
+// For old carried-forward accounts (no Excel data), score from what we have
+function calcScoreOld(d) {
+  let pts = 0;
+
+  // Old accounts have: sales, fit (A/B), vertical, contacts
+  // Use sales as a proxy for VJ revenue
+  const sales = d.sales || 0;
+  if (sales > 100000) pts += 12;
+  else if (sales >= 50000) pts += 10;
+  else if (sales >= 10000) pts += 7;
+  else if (sales > 0) pts += 4;
+
+  // Old fit was curated — A-fit accounts were better opportunities
+  if (d.fit === 'A') pts += 10;
+  else if (d.fit === 'B') pts += 5;
+
+  // Vertical alignment with marking/coding
+  const v = (d.vertical || '').toLowerCase();
+  if (v.match(/food|bev|bak|pet|dairy|meat|fruit|vegetable|cereal|snack|confect/)) pts += 10;
+  else if (v.match(/pharma|medical|biotech|animal health/)) pts += 9;
+  else if (v.match(/packag/)) pts += 8;
+  else if (v.match(/auto|aero|transport/)) pts += 7;
+  else if (v.match(/plastic|rubber/)) pts += 6;
+  else if (v.match(/consumer|cpg/)) pts += 6;
+  else if (v.match(/chemical|building|construct/)) pts += 5;
+  else if (v.match(/beverage|brew/)) pts += 8;
+  else pts += 2;
+
+  // Having contacts = better researched account
+  if (d.contacts && d.contacts.length >= 3) pts += 3;
+  else if (d.contacts && d.contacts.length >= 1) pts += 1;
+
+  return pts;
 }
+
+// Grades will be assigned AFTER all accounts are scored, using percentile quartiles
+// (see below after all accounts are built)
 
 // ── 6. Determine account status ──
 function getStatus(r) {
@@ -240,7 +313,7 @@ rows.forEach(r => {
 
   const status = getStatus(r);
   const score = calcScore(r);
-  const grade = scoreToGrade(score);
+  const grade = '?'; // assigned later via percentile quartiles
   const rev012 = Number(r['Rev (All) - 0-12 Month Rolling']) || 0;
   const rev1224 = Number(r['Rev (All) - 12-24 Month Rolling']) || 0;
   const trend = parseYOYTrend(r['Rev (All) - YOY Trend']);
@@ -410,8 +483,8 @@ existingData.forEach(d => {
   if (seenKeys.has(dedupKey)) return;
   seenKeys.add(dedupKey);
 
-  const oldFit = d.fit || 'C';
-  const grade = (oldFit === 'A') ? 'C' : (oldFit === 'B') ? 'C' : 'D';
+  const score = calcScoreOld(d);
+  const grade = '?'; // assigned later via percentile quartiles
   const status = d.status === 'active' ? 'active' : 'prospect';
 
   const newAcct = {
@@ -424,7 +497,7 @@ existingData.forEach(d => {
     lng: d.lng,
     status,
     grade,
-    score: 0,
+    score,
     rev012: Math.round(d.sales || 0),
     rev1224: 0,
     trend: 'unknown',
@@ -443,6 +516,23 @@ existingData.forEach(d => {
   accountsByNormNameCity[newKey].push(accounts.length - 1);
 
   carriedForward++;
+});
+
+// ── 8c. Assign grades via percentile quartiles for even distribution ──
+// Sort all scores descending, find quartile boundaries
+const allScores = accounts.map(a => a.score).sort((a, b) => b - a);
+const q25 = allScores[Math.floor(allScores.length * 0.25)]; // top 25% boundary
+const q50 = allScores[Math.floor(allScores.length * 0.50)]; // top 50% boundary
+const q75 = allScores[Math.floor(allScores.length * 0.75)]; // top 75% boundary
+
+console.log(`Score quartile boundaries: A >= ${q25}, B >= ${q50}, C >= ${q75}, D < ${q75}`);
+console.log(`Score range: ${allScores[0]} - ${allScores[allScores.length - 1]}`);
+
+accounts.forEach(a => {
+  if (a.score >= q25) a.grade = 'A';
+  else if (a.score >= q50) a.grade = 'B';
+  else if (a.score >= q75) a.grade = 'C';
+  else a.grade = 'D';
 });
 
 console.log(`Processed ${accounts.length} accounts (${accounts.length - carriedForward} from Excel/merged, ${carriedForward} carried forward, ${mergedInto} old entries merged into Excel accounts)`);
