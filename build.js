@@ -253,13 +253,15 @@ function calcScoreOld(d) {
 // (see section 8c below)
 
 // ── 6. Determine account status ──
+// Gold = active (rev last 12mo)
+// Red-orange = lapsed (Type=Active Customer but no rev last 12mo)
+// Pink = dormant (has VJ equipment installed but no orders last 12mo, was never typed Active)
+// Prospect = everything else
 function getStatus(r) {
   const type = String(r['Type'] || '').trim();
   const rev012 = Number(r['Rev (All) - 0-12 Month Rolling']) || 0;
   const rev1224 = Number(r['Rev (All) - 12-24 Month Rolling']) || 0;
-  const lastActivity = excelDateToJS(r['Last Activity']);
-  const now = new Date();
-  const twoYearsAgo = new Date(now.getFullYear() - 2, now.getMonth(), now.getDate());
+  const vjPrinters = Number(r['Total Number of Active Printers(VJDB)']) || 0;
 
   // Any account with revenue in the last 12 months = Active Customer (gold)
   if (rev012 > 0) return 'active';
@@ -267,8 +269,12 @@ function getStatus(r) {
   // Type says Active Customer but zero revenue last 12 months = Lapsed (red-orange)
   if (type === 'Active Customer') return 'lapsed';
 
-  // Not an active customer, but had revenue 12-24 months ago = also lapsed
-  if (rev1224 > 0) return 'lapsed';
+  // Has VJ equipment but no recent orders = Dormant (pink)
+  // These accounts bought systems from us but stopped ordering
+  if (vjPrinters > 0) return 'dormant';
+
+  // Had revenue 12-24 months ago = also dormant
+  if (rev1224 > 0) return 'dormant';
 
   return 'prospect';
 }
@@ -360,6 +366,35 @@ rows.forEach(r => {
   const baTotal = Number(r['BINARY ARRAY-VJ ERP']) || 0;
   if (baTotal > 0) vjEquip['Binary Array'] = baTotal;
 
+  // Per-technology last purchase window (parts + supplies revenue by tech)
+  // Shows when they last ordered for each technology type
+  const techActivity = {};
+  function checkTechRev(tech, cols012, cols1224) {
+    const rev012 = cols012.reduce((s, c) => s + (Number(r[c]) || 0), 0);
+    const rev1224 = cols1224.reduce((s, c) => s + (Number(r[c]) || 0), 0);
+    if (rev012 > 0) techActivity[tech] = { window: '0-12mo', rev: Math.round(rev012) };
+    else if (rev1224 > 0) techActivity[tech] = { window: '12-24mo', rev: Math.round(rev1224) };
+    else if (vjEquip[tech]) techActivity[tech] = { window: '24mo+', rev: 0 };
+  }
+  checkTechRev('CIJ',
+    ['REV IB SUP CIJ 0 12 MON LC', 'REV_IB_PART_CIJ_0_12_MON_LC'],
+    ['REV IB SUP CIJ 12 24 MON LC', 'REV_IB_PART_CIJ_12_24_MON_LC']);
+  checkTechRev('Laser',
+    ['REV_IB_SUP_LASER_0_12_MON_LC', 'REV_IB_PART_LASER_0_12_MON_LC'],
+    ['REV_IB_SUP_LASER_12_24_MON_LC', 'REV_IB_PART_LASER_12_24_MON_LC']);
+  checkTechRev('LCM',
+    ['REV IB SUP LCM 0-12 MON LC', 'REV_IB_PART_LCM_0_12_MON_LC'],
+    ['REV IB SUP LCM 12 24 MON LC', 'REV_IB_PART_LCM_12_24_MON_LC']);
+  checkTechRev('TTO',
+    ['REV_IB_SUP_TTO_0_12_MON_LC', 'REV_IB_PART_TTO_0_12_MON_LC'],
+    ['REV_IB_SUP_TTO_12_24_MON_LC', 'REV_IB_PART_TTO_12_24_MON_LC']);
+  checkTechRev('TIJ',
+    ['REV_IB_SUP_TIJ_0_12_MON_LC', 'REV_IB_PART_TIJ_0_12_MON_LC__c'],
+    ['REV_IB_SUP_TIJ_12_24_MON_LC', 'REV_IB_PART_TIJ_12_24_MON_LC']);
+  checkTechRev('LPA',
+    ['REV IB SUP LPA 0-12 MON LC', 'REV_IB_PART_LPA_0_12_MON_LC__c'],
+    ['REV_IB_SUP_LPA_12_24_MON_LC', 'REV_IB_PART_LPA_12_24_MON_LC']);
+
   const city = (r['Shipping City'] || '').trim();
   const vertical = (r['Vertical'] || r['Industry'] || 'Other / Unknown').trim();
 
@@ -412,6 +447,7 @@ rows.forEach(r => {
     compLaser,
     prodLines,
     vjEquip,
+    techActivity,
     oppNote,
     contacts
   });
@@ -580,6 +616,7 @@ accounts.forEach(a => {
 console.log(`Processed ${accounts.length} accounts (${accounts.length - carriedForward} from Excel/merged, ${carriedForward} carried forward, ${mergedInto} old entries merged into Excel accounts)`);
 console.log(`  Active: ${accounts.filter(a=>a.status==='active').length}`);
 console.log(`  Lapsed: ${accounts.filter(a=>a.status==='lapsed').length}`);
+console.log(`  Dormant: ${accounts.filter(a=>a.status==='dormant').length}`);
 console.log(`  Prospect: ${accounts.filter(a=>a.status==='prospect').length}`);
 console.log(`  A-grade: ${accounts.filter(a=>a.grade==='A').length}`);
 console.log(`  B-grade: ${accounts.filter(a=>a.grade==='B').length}`);
@@ -588,7 +625,7 @@ console.log(`  D-grade: ${accounts.filter(a=>a.grade==='D').length}`);
 
 // Sort: active first, then lapsed, then by grade
 accounts.sort((a, b) => {
-  const statusOrder = { active: 0, lapsed: 1, prospect: 2 };
+  const statusOrder = { active: 0, lapsed: 1, dormant: 2, prospect: 3 };
   const gradeOrder = { A: 0, B: 1, C: 2, D: 3 };
   if (statusOrder[a.status] !== statusOrder[b.status]) return statusOrder[a.status] - statusOrder[b.status];
   if (gradeOrder[a.grade] !== gradeOrder[b.grade]) return gradeOrder[a.grade] - gradeOrder[b.grade];
@@ -634,6 +671,8 @@ const desktopHTML = `<!DOCTYPE html>
   --active-glow: rgba(255,215,0,0.4);
   --lapsed-color: #FF6B35;
   --lapsed-glow: rgba(255,107,53,0.5);
+  --dormant-color: #E91E90;
+  --dormant-glow: rgba(233,30,144,0.4);
   --a-color: #2ECC71;
   --a-glow: rgba(46,204,113,0.35);
   --b-color: #3498DB;
@@ -683,6 +722,7 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
 .pill.grade-c.active { background:var(--c-color); border-color:var(--c-color); }
 .pill.status-active.active { background:var(--active-color); border-color:var(--active-color); }
 .pill.status-lapsed.active { background:var(--lapsed-color); border-color:var(--lapsed-color); }
+.pill.status-dormant.active { background:var(--dormant-color); border-color:var(--dormant-color); }
 .results-header { display:flex; align-items:center; justify-content:space-between; padding:10px 16px 8px; border-bottom:1px solid var(--border); }
 .results-count { font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--text-dim); }
 .results-count span { color:var(--accent); font-weight:500; }
@@ -698,6 +738,7 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
 .result-item::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; }
 .result-item.status-active::before { background:var(--active-color); }
 .result-item.status-lapsed::before { background:var(--lapsed-color); }
+.result-item.status-dormant::before { background:var(--dormant-color); }
 .result-item.grade-A.status-prospect::before { background:var(--a-color); }
 .result-item.grade-B.status-prospect::before { background:var(--b-color); }
 .result-item.grade-C.status-prospect::before { background:var(--c-color); }
@@ -712,6 +753,7 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
 .result-status-badge { padding:1px 5px; border-radius:2px; font-size:9px; font-weight:600; letter-spacing:0.5px; }
 .result-status-badge.active { background:rgba(255,215,0,0.15); color:var(--active-color); }
 .result-status-badge.lapsed { background:rgba(255,107,53,0.15); color:var(--lapsed-color); }
+.result-status-badge.dormant { background:rgba(233,30,144,0.15); color:var(--dormant-color); }
 .result-star { color:#FFD700; margin-right:4px; }
 .result-ring { color:#FF4444; margin-right:4px; font-size:8px; }
 
@@ -727,6 +769,7 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
 .map-marker:hover { transform:scale(1.5); z-index:999!important; }
 .map-marker.status-active { background:var(--active-color); box-shadow:0 0 10px var(--active-glow); border:2px solid rgba(255,215,0,0.6); }
 .map-marker.status-lapsed { background:var(--lapsed-color); box-shadow:0 0 12px var(--lapsed-glow); border:2px solid rgba(255,107,53,0.7); }
+.map-marker.status-dormant { background:var(--dormant-color); box-shadow:0 0 12px var(--dormant-glow); border:2px solid rgba(233,30,144,0.6); }
 .map-marker.grade-A { background:var(--a-color); box-shadow:0 0 8px var(--a-glow); }
 .map-marker.grade-B { background:var(--b-color); box-shadow:0 0 8px var(--b-glow); }
 .map-marker.grade-C { background:var(--c-color); box-shadow:0 0 8px var(--c-glow); }
@@ -757,6 +800,7 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
 .badge-d { background:rgba(149,165,166,0.15); color:var(--d-color); border:1px solid rgba(149,165,166,0.3); }
 .badge-active { background:rgba(255,215,0,0.15); color:var(--active-color); border:1px solid rgba(255,215,0,0.3); }
 .badge-lapsed { background:rgba(255,107,53,0.15); color:var(--lapsed-color); border:1px solid rgba(255,107,53,0.3); }
+.badge-dormant { background:rgba(233,30,144,0.15); color:var(--dormant-color); border:1px solid rgba(233,30,144,0.3); }
 .badge-vert { background:rgba(0,212,255,0.08); color:var(--accent); border:1px solid rgba(0,212,255,0.2); }
 .popup-details { margin-top:8px; padding-top:8px; border-top:1px solid var(--border); font-family:'IBM Plex Mono',monospace; font-size:10px; }
 .popup-detail-row { display:flex; justify-content:space-between; margin-bottom:3px; color:var(--text-dim); }
@@ -833,6 +877,7 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
     <div class="stat"><div class="stat-value" id="hdr-total" style="color:var(--text-bright)">0</div><div class="stat-label">Accounts</div></div>
     <div class="stat"><div class="stat-value" id="hdr-active" style="color:var(--active-color)">0</div><div class="stat-label">Active</div></div>
     <div class="stat"><div class="stat-value" id="hdr-lapsed" style="color:var(--lapsed-color)">0</div><div class="stat-label">Lapsed</div></div>
+    <div class="stat"><div class="stat-value" id="hdr-dormant" style="color:var(--dormant-color)">0</div><div class="stat-label">Dormant</div></div>
     <div class="stat"><div class="stat-value" id="hdr-prospect" style="color:var(--accent)">0</div><div class="stat-label">Prospects</div></div>
   </div>
   <div class="header-actions">
@@ -876,6 +921,7 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
           <div class="pill active" data-val="ALL">All</div>
           <div class="pill status-active" data-val="active">Active</div>
           <div class="pill status-lapsed" data-val="lapsed">Lapsed</div>
+          <div class="pill status-dormant" data-val="dormant">Dormant</div>
           <div class="pill" data-val="prospect">Prospect</div>
         </div>
       </div>
@@ -912,6 +958,7 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
       <div class="legend-title">Legend</div>
       <div class="legend-item"><div class="legend-dot" style="background:var(--active-color);box-shadow:0 0 6px var(--active-glow)"></div> Active Customer</div>
       <div class="legend-item"><div class="legend-dot" style="background:var(--lapsed-color);box-shadow:0 0 6px var(--lapsed-glow)"></div> Lapsed Customer</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--dormant-color);box-shadow:0 0 6px var(--dormant-glow)"></div> Dormant (has equip)</div>
       <div class="legend-item"><div class="legend-dot" style="background:var(--a-color);box-shadow:0 0 6px var(--a-glow)"></div> A-Grade Prospect</div>
       <div class="legend-item"><div class="legend-dot" style="background:var(--b-color);box-shadow:0 0 6px var(--b-glow)"></div> B-Grade Prospect</div>
       <div class="legend-item"><div class="legend-dot" style="background:var(--c-color);box-shadow:0 0 6px var(--c-glow)"></div> C-Grade Prospect</div>
@@ -929,7 +976,7 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
     <div class="edit-row"><label>Star</label><select id="edit-star"><option value="0">No</option><option value="1">&#x2B50; Yes</option></select></div>
     <div class="edit-row"><label>Trial/Opp</label><select id="edit-ring"><option value="0">No</option><option value="1">&#x1F534; Active Trial</option></select></div>
     <div class="edit-row"><label>Grade</label><select id="edit-grade"><option value="">Auto</option><option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option></select></div>
-    <div class="edit-row"><label>Status</label><select id="edit-status"><option value="">Auto</option><option value="active">Active Customer</option><option value="lapsed">Lapsed Customer</option><option value="prospect">Prospect</option></select></div>
+    <div class="edit-row"><label>Status</label><select id="edit-status"><option value="">Auto</option><option value="active">Active Customer</option><option value="lapsed">Lapsed Customer</option><option value="dormant">Dormant</option><option value="prospect">Prospect</option></select></div>
     <div class="edit-row"><label>Note</label><textarea id="edit-note" placeholder="Add a note..."></textarea></div>
     <div class="edit-btns">
       <div class="edit-btn danger" id="edit-delete-btn">Delete</div>
@@ -1034,14 +1081,15 @@ function getMarkerClass(d) {
   const eff = getEffective(d);
   if (eff.status === 'active') return 'status-active';
   if (eff.status === 'lapsed') return 'status-lapsed';
+  if (eff.status === 'dormant') return 'status-dormant';
   return 'grade-' + eff.grade;
 }
 
 function buildPopup(d, idx) {
   const eff = getEffective(d, idx);
   const hasContacts = eff.contacts && eff.contacts.length > 0;
-  const statusLabel = eff.status === 'active' ? 'Active Customer' : eff.status === 'lapsed' ? 'Lapsed Customer' : 'Prospect';
-  const statusClass = eff.status === 'active' ? 'badge-active' : eff.status === 'lapsed' ? 'badge-lapsed' : '';
+  const statusLabel = eff.status === 'active' ? 'Active Customer' : eff.status === 'lapsed' ? 'Lapsed Customer' : eff.status === 'dormant' ? 'Dormant Customer' : 'Prospect';
+  const statusClass = eff.status === 'active' ? 'badge-active' : eff.status === 'lapsed' ? 'badge-lapsed' : eff.status === 'dormant' ? 'badge-dormant' : '';
   const gradeClass = 'badge-' + eff.grade.toLowerCase();
   const trendIcon = eff.trend === 'Rising' ? '<span style="color:var(--a-color)">&uarr; Growing</span>' : eff.trend === 'Declining' ? '<span style="color:#FF6B6B">&darr; Declining</span>' : '&mdash;';
 
@@ -1089,11 +1137,12 @@ function render() {
   const filtered = allData.map((d,i) => ({...d, _idx:i})).filter(matchesFilters);
 
   // Counts
-  let activeCount=0, lapsedCount=0, prospectCount=0;
+  let activeCount=0, lapsedCount=0, dormantCount=0, prospectCount=0;
   filtered.forEach(d => {
     const eff = getEffective(d);
     if (eff.status === 'active') activeCount++;
     else if (eff.status === 'lapsed') lapsedCount++;
+    else if (eff.status === 'dormant') dormantCount++;
     else prospectCount++;
   });
 
@@ -1101,6 +1150,7 @@ function render() {
   document.getElementById('hdr-total').textContent = filtered.length;
   document.getElementById('hdr-active').textContent = activeCount;
   document.getElementById('hdr-lapsed').textContent = lapsedCount;
+  document.getElementById('hdr-dormant').textContent = dormantCount;
   document.getElementById('hdr-prospect').textContent = prospectCount;
 
   // Sidebar list
@@ -1116,7 +1166,7 @@ function render() {
           <span class="result-grade \${eff.grade}">\${eff.grade}</span>
           <span>\${eff.city}, \${eff.state}</span>
           \${eff.status === 'active' ? '<span class="result-status-badge active">ACTIVE</span>' : ''}
-          \${eff.status === 'lapsed' ? '<span class="result-status-badge lapsed">LAPSED</span>' : ''}
+          \${eff.status === 'lapsed' ? '<span class="result-status-badge lapsed">LAPSED</span>' : eff.status === 'dormant' ? '<span class="result-status-badge dormant">DORMANT</span>' : ''}
         </div>
       </div>\`;
     }).join('');
@@ -1136,7 +1186,7 @@ function render() {
       html: \`<div class="map-marker \${cls} \${selectedIdx === d._idx ? 'selected' : ''}" data-idx="\${d._idx}">\${starHTML}\${ringHTML}</div>\`,
       iconSize: [14,14], iconAnchor: [7,7]
     });
-    const marker = L.marker([d.lat, d.lng], { icon, zIndexOffset: d.status==='active'?200:d.status==='lapsed'?100:d.grade==='A'?50:0 })
+    const marker = L.marker([d.lat, d.lng], { icon, zIndexOffset: d.status==='active'?200:d.status==='lapsed'?150:d.status==='dormant'?100:d.grade==='A'?50:0 })
       .bindPopup(buildPopup(d, d._idx), { maxWidth: 360 });
     marker.on('click', () => selectAccount(d._idx));
     plainGroup.addLayer(marker);
@@ -1398,6 +1448,8 @@ const mobileHTML = `<!DOCTYPE html>
   --active-glow: rgba(255,215,0,0.4);
   --lapsed-color: #FF6B35;
   --lapsed-glow: rgba(255,107,53,0.5);
+  --dormant-color: #E91E90;
+  --dormant-glow: rgba(233,30,144,0.4);
   --a-color: #2ECC71;
   --a-glow: rgba(46,204,113,0.35);
   --b-color: #3498DB;
@@ -1464,6 +1516,7 @@ html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); col
 .pill.grade-c.active { background:var(--c-color); border-color:var(--c-color); }
 .pill.status-active.active { background:var(--active-color); border-color:var(--active-color); }
 .pill.status-lapsed.active { background:var(--lapsed-color); border-color:var(--lapsed-color); }
+.pill.status-dormant.active { background:var(--dormant-color); border-color:var(--dormant-color); }
 #sidebar-actions { padding:14px 16px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:8px; }
 .sb-btn { width:100%; padding:8px; border:1px solid var(--border2); border-radius:4px; background:none; color:var(--text-dim); font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:1px; text-transform:uppercase; cursor:pointer; text-align:center; }
 .sb-btn:active { background:var(--surface2); }
@@ -1489,6 +1542,7 @@ html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); col
 .badge-d { background:rgba(149,165,166,0.12); color:var(--d-color); border:1px solid rgba(149,165,166,0.3); }
 .badge-active { background:rgba(255,215,0,0.12); color:var(--active-color); border:1px solid rgba(255,215,0,0.3); }
 .badge-lapsed { background:rgba(255,107,53,0.12); color:var(--lapsed-color); border:1px solid rgba(255,107,53,0.3); }
+.badge-dormant { background:rgba(233,30,144,0.12); color:var(--dormant-color); border:1px solid rgba(233,30,144,0.3); }
 .badge-vert { background:rgba(0,212,255,0.08); color:var(--accent); border:1px solid rgba(0,212,255,0.2); }
 .popup-details { margin-top:8px; padding-top:8px; border-top:1px solid var(--border); font-family:'IBM Plex Mono',monospace; font-size:10px; }
 .popup-detail-row { display:flex; justify-content:space-between; margin-bottom:3px; color:var(--text-dim); }
@@ -1547,6 +1601,7 @@ html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); col
 .map-marker:hover { transform:scale(1.6); }
 .map-marker.status-active { background:var(--active-color); box-shadow:0 0 10px var(--active-glow); }
 .map-marker.status-lapsed { background:var(--lapsed-color); box-shadow:0 0 12px var(--lapsed-glow); }
+.map-marker.status-dormant { background:var(--dormant-color); box-shadow:0 0 12px var(--dormant-glow); }
 .map-marker.grade-A { background:var(--a-color); box-shadow:0 0 8px var(--a-glow); }
 .map-marker.grade-B { background:var(--b-color); box-shadow:0 0 8px var(--b-glow); }
 .map-marker.grade-C { background:var(--c-color); box-shadow:0 0 8px var(--c-glow); }
@@ -1572,6 +1627,7 @@ html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); col
     <div class="stat-chip"><span class="val" style="color:var(--text-bright)" id="s-total">0</span> Accounts</div>
     <div class="stat-chip"><span class="val" style="color:var(--active-color)" id="s-active">0</span> Active</div>
     <div class="stat-chip"><span class="val" style="color:var(--lapsed-color)" id="s-lapsed">0</span> Lapsed</div>
+    <div class="stat-chip"><span class="val" style="color:var(--dormant-color)" id="s-dormant">0</span> Dormant</div>
     <div class="stat-chip"><span class="val" style="color:var(--accent)" id="s-prospect">0</span> Prospect</div>
   </div>
 </div>
@@ -1610,6 +1666,7 @@ html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); col
         <div class="pill active" data-val="ALL">All</div>
         <div class="pill status-active" data-val="active">Active</div>
         <div class="pill status-lapsed" data-val="lapsed">Lapsed</div>
+        <div class="pill status-dormant" data-val="dormant">Dormant</div>
         <div class="pill" data-val="prospect">Prospect</div>
       </div>
     </div>
@@ -1629,6 +1686,7 @@ html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); col
     <div id="legend-row">
       <div class="leg-item"><div class="leg-dot" style="background:var(--active-color)"></div> Active</div>
       <div class="leg-item"><div class="leg-dot" style="background:var(--lapsed-color)"></div> Lapsed</div>
+      <div class="leg-item"><div class="leg-dot" style="background:var(--dormant-color)"></div> Dormant</div>
       <div class="leg-item"><div class="leg-dot" style="background:var(--a-color)"></div> A-Grade</div>
       <div class="leg-item"><div class="leg-dot" style="background:var(--b-color)"></div> B-Grade</div>
       <div class="leg-item"><div class="leg-dot" style="background:var(--c-color)"></div> C-Grade</div>
@@ -1658,7 +1716,7 @@ html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); col
     <div class="edit-row"><label>Star</label><select id="edit-star"><option value="0">No</option><option value="1">&#x2B50; Yes</option></select></div>
     <div class="edit-row"><label>Trial</label><select id="edit-ring"><option value="0">No</option><option value="1">&#x1F534; Active</option></select></div>
     <div class="edit-row"><label>Grade</label><select id="edit-grade"><option value="">Auto</option><option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option></select></div>
-    <div class="edit-row"><label>Status</label><select id="edit-status"><option value="">Auto</option><option value="active">Active</option><option value="lapsed">Lapsed</option><option value="prospect">Prospect</option></select></div>
+    <div class="edit-row"><label>Status</label><select id="edit-status"><option value="">Auto</option><option value="active">Active</option><option value="lapsed">Lapsed</option><option value="dormant">Dormant</option><option value="prospect">Prospect</option></select></div>
     <div class="edit-row"><label>Note</label><textarea id="edit-note" placeholder="Note..."></textarea></div>
     <div class="edit-btns">
       <div class="edit-btn danger" id="edit-delete">Delete</div>
@@ -1722,6 +1780,7 @@ function getMarkerClass(d) {
   const eff = getEffective(d);
   if (eff.status === 'active') return 'status-active';
   if (eff.status === 'lapsed') return 'status-lapsed';
+  if (eff.status === 'dormant') return 'status-dormant';
   return 'grade-' + eff.grade;
 }
 
@@ -1751,8 +1810,8 @@ function matchesFilters(d) {
 function buildPopup(d, idx) {
   const eff = getEffective(d);
   const hasContacts = eff.contacts && eff.contacts.length > 0;
-  const statusLabel = eff.status === 'active' ? 'Active Customer' : eff.status === 'lapsed' ? 'Lapsed Customer' : 'Prospect';
-  const statusClass = eff.status === 'active' ? 'badge-active' : eff.status === 'lapsed' ? 'badge-lapsed' : '';
+  const statusLabel = eff.status === 'active' ? 'Active Customer' : eff.status === 'lapsed' ? 'Lapsed Customer' : eff.status === 'dormant' ? 'Dormant Customer' : 'Prospect';
+  const statusClass = eff.status === 'active' ? 'badge-active' : eff.status === 'lapsed' ? 'badge-lapsed' : eff.status === 'dormant' ? 'badge-dormant' : '';
   const gradeClass = 'badge-' + eff.grade.toLowerCase();
   const trendIcon = eff.trend === 'Rising' ? '<span style="color:var(--a-color)">&uarr; Growing</span>' : eff.trend === 'Declining' ? '<span style="color:#FF6B6B">&darr; Declining</span>' : '&mdash;';
 
@@ -1792,17 +1851,19 @@ function render() {
   const allData = [...RAW_DATA, ...customAccounts];
   const filtered = allData.map((d,i)=>({...d,_idx:i})).filter(matchesFilters);
 
-  let activeCount=0, lapsedCount=0, prospectCount=0;
+  let activeCount=0, lapsedCount=0, dormantCount=0, prospectCount=0;
   filtered.forEach(d => {
     const eff = getEffective(d);
     if (eff.status==='active') activeCount++;
     else if (eff.status==='lapsed') lapsedCount++;
+    else if (eff.status==='dormant') dormantCount++;
     else prospectCount++;
   });
 
   document.getElementById('s-total').textContent = filtered.length;
   document.getElementById('s-active').textContent = activeCount;
   document.getElementById('s-lapsed').textContent = lapsedCount;
+  document.getElementById('s-dormant').textContent = dormantCount;
   document.getElementById('s-prospect').textContent = prospectCount;
 
   // Render individual markers (no clustering)
@@ -1816,7 +1877,7 @@ function render() {
       html:\`<div class="map-marker \${cls}">\${starHTML}\${ringHTML}</div>\`,
       iconSize:[12,12], iconAnchor:[6,6]
     });
-    const m = L.marker([d.lat, d.lng], { icon, zIndexOffset: d.status==='active'?200:d.status==='lapsed'?100:d.grade==='A'?50:0 })
+    const m = L.marker([d.lat, d.lng], { icon, zIndexOffset: d.status==='active'?200:d.status==='lapsed'?150:d.status==='dormant'?100:d.grade==='A'?50:0 })
       .bindPopup(buildPopup(d, d._idx), { maxWidth:300 });
     m.on('click', () => { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebar-overlay').classList.remove('open'); });
     plainGroup.addLayer(m);
