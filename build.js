@@ -105,94 +105,111 @@ function parseYOYTrend(val) {
 }
 
 // ── 5. Opportunity-based scoring ──
-// Grades accounts on additional opportunity potential using percentile-based
-// quartiles so A/B/C/D are roughly evenly distributed.
+// Grades reflect "how likely does this site need marking/coding equipment?"
+// based primarily on WHAT THEY DO + HOW BIG THEY ARE — available for nearly
+// every account. Install data is a bonus signal, not a requirement. A 200-person
+// food plant with zero known installs should still be an A.
 //
-// Signals (weighted by predictive value for marking/coding opportunity):
-//   Plant size (employees)         — larger plant = more production lines
-//   Company revenue banding        — bigger company = more sites & volume
-//   Industry fit                   — manufacturing is core market
-//   Competitive printer installs   — PROVEN need for marking/coding
-//   VJ installed base              — existing relationship, expansion potential
-//   Current VJ revenue             — wallet share growth opportunity
-//   80-20 Segmentation             — Videojet's own account ranking
-//   AP Potential Segmentation      — aftermarket potential (XL/L/M/S)
+// CORE signals (~70% of score, available for most accounts):
+//   Vertical / industry fit        — food/pharma need coders on every line
+//   Plant size (employees)         — more people = more production lines
+//   Company revenue banding        — bigger company = more volume
+//
+// BONUS signals (~30%, rewards having intel but absence doesn't punish):
+//   Competitive printer installs   — confirmed need
+//   VJ installed base              — expansion opportunity
+//   Current VJ revenue             — wallet share growth
 //   Upgrade Readiness              — near-term equipment opportunity
-//   Open Opportunities             — active sales engagement
 
-function revBandToScore(band) {
-  if (!band) return 0;
-  if (band.includes('5B+') || band.includes('1B-5B')) return 15;
-  if (band.includes('500M-1B') || band.includes('250M-500M')) return 14;
-  if (band.includes('100M-250M')) return 13;
-  if (band.includes('50M-100M')) return 12;
-  if (band.includes('25M-50M')) return 10;
-  if (band.includes('10M-25M')) return 8;
-  if (band.includes('5M-10M')) return 6;
-  if (band.includes('1M-5M')) return 3;
-  if (band.includes('0M-1M')) return 1;
-  return 0;
+// Vertical fit: "If I walked into a typical site in this vertical,
+// how many production/packaging lines would need a coder?"
+function verticalFitScore(vertical, industry) {
+  const v = (vertical || '').toLowerCase();
+  const ind = (industry || '').toLowerCase();
+
+  // HIGH: every line needs a coder, high volume, regulatory requirements
+  if (v.match(/food|meat|poultry|dairy|egg|baked|cereal|fruit|vegetable|frozen|snack|candy|confect|pet food|animal feed/)) return 30;
+  if (v.match(/beverage|brew/)) return 28;
+  if (v.match(/pharma|medical|cosmetic|personal care/)) return 28;
+
+  // GOOD: packaging-intensive, uses marking
+  if (v.match(/packag/)) return 22;
+  if (v.match(/chemical/)) return 20;
+  if (v.match(/plastic|rubber|extrusion|wire|cable/)) return 18;
+  if (v.match(/consumer|cpg/)) return 18;
+
+  // MODERATE: some lines, less volume
+  if (v.match(/auto|aero|transport|aircraft/)) return 15;
+  if (v.match(/building|construct/)) return 14;
+  if (v.match(/industrial|electric/)) return 13;
+
+  // LOW: minimal marking needs
+  if (v.match(/graphic|print|text|distribut|oem/)) return 8;
+
+  // Unknown vertical — fall back to industry
+  if (!v || v === 'empty' || v.match(/other|unknown/i)) {
+    if (ind.match(/agri|food|pharma|chemical/)) return 20;
+    if (ind.includes('manufact')) return 15;
+    if (ind.match(/retail|transport|mineral/)) return 10;
+    return 5;
+  }
+
+  // Catch-all (numeric SIC codes etc)
+  if (ind.includes('manufact')) return 15;
+  return 5;
 }
 
 function calcScore(r) {
   let pts = 0;
 
-  // Plant size / employee count (proxy for production scale)
+  // ── CORE: What they do + how big (drives ~70% of grade) ──
+
+  // Vertical / industry fit
+  pts += verticalFitScore(r['Vertical'], r['Industry']);
+
+  // Plant size (employees)
   const employees = Number(r['Employees']) || 0;
-  if (employees >= 500) pts += 20;
-  else if (employees >= 200) pts += 16;
-  else if (employees >= 100) pts += 13;
-  else if (employees >= 50) pts += 10;
-  else if (employees >= 20) pts += 6;
-  else if (employees >= 5) pts += 3;
+  if (employees >= 500) pts += 25;
+  else if (employees >= 200) pts += 22;
+  else if (employees >= 100) pts += 18;
+  else if (employees >= 50) pts += 14;
+  else if (employees >= 20) pts += 9;
+  else if (employees >= 5) pts += 5;
+  else pts += 1;
 
-  // Company annual revenue banding
-  pts += revBandToScore(r['Annual Revenue Banding - USD']);
+  // Company revenue banding
+  const b = r['Annual Revenue Banding - USD'] || '';
+  if (b.includes('5B+') || b.includes('1B-5B')) pts += 15;
+  else if (b.includes('500M-1B') || b.includes('250M-500M')) pts += 13;
+  else if (b.includes('100M-250M') || b.includes('50M-100M')) pts += 11;
+  else if (b.includes('25M-50M') || b.includes('10M-25M')) pts += 8;
+  else if (b.includes('5M-10M')) pts += 6;
+  else if (b.includes('1M-5M')) pts += 3;
+  else pts += 1;
 
-  // Industry fit — manufacturing = core marking/coding market
-  const industry = (r['Industry'] || '').toLowerCase();
-  if (industry.includes('manufact')) pts += 10;
-  else if (industry.match(/mineral|mining|agriculture|food|pharma|chemical/)) pts += 7;
-  else if (industry.match(/retail|transport/)) pts += 3;
+  // ── BONUS: Known intel (rewards data, doesn't punish absence) ──
 
-  // Competitive installs = PROVEN need for marking/coding at this site
+  // Competitive installs — confirmed need
   const compTotal = Number(r['Total number of Competitive Printers']) || 0;
-  if (compTotal > 10) pts += 20;
-  else if (compTotal >= 5) pts += 15;
-  else if (compTotal >= 1) pts += 10;
+  if (compTotal > 10) pts += 10;
+  else if (compTotal >= 5) pts += 7;
+  else if (compTotal >= 1) pts += 4;
 
-  // VJ installed base = expansion opportunity
+  // VJ installed base — expansion opportunity
   const vjPrinters = Number(r['Total Number of Active Printers(VJDB)']) || 0;
-  if (vjPrinters >= 10) pts += 15;
-  else if (vjPrinters >= 5) pts += 12;
-  else if (vjPrinters >= 1) pts += 8;
+  if (vjPrinters >= 10) pts += 8;
+  else if (vjPrinters >= 5) pts += 5;
+  else if (vjPrinters >= 1) pts += 3;
 
-  // Current VJ revenue (wallet share growth)
+  // Current VJ revenue
   const rev012 = Number(r['Rev (All) - 0-12 Month Rolling']) || 0;
-  if (rev012 > 100000) pts += 12;
-  else if (rev012 >= 50000) pts += 10;
-  else if (rev012 >= 10000) pts += 7;
-  else if (rev012 > 0) pts += 4;
+  if (rev012 > 100000) pts += 6;
+  else if (rev012 >= 50000) pts += 5;
+  else if (rev012 >= 10000) pts += 3;
+  else if (rev012 > 0) pts += 1;
 
-  // 80-20 Segmentation (Videojet's own ranking)
-  const seg = (r['80-20 Segmentation'] || '').toUpperCase().trim();
-  if (seg === 'A') pts += 10;
-  else if (seg === 'B') pts += 7;
-  else if (seg === 'C') pts += 4;
-  else if (seg === 'D') pts += 2;
-
-  // AP Potential Segmentation (aftermarket potential)
-  const apSeg = (r['AP Potential Segmentation'] || '').toUpperCase().trim();
-  if (apSeg === 'XL') pts += 10;
-  else if (apSeg === 'L') pts += 7;
-  else if (apSeg === 'M') pts += 5;
-  else if (apSeg === 'S') pts += 3;
-
-  // Upgrade Readiness — near-term equipment opportunity
-  if (String(r['Upgrade Readiness'] || '').toUpperCase().trim() === 'Y') pts += 8;
-
-  // Open Opportunities — active sales engagement
-  if ((Number(r['# of Open Opportunities']) || 0) > 0) pts += 5;
+  // Upgrade readiness
+  if (r['Upgrade Readiness'] === 'Y') pts += 4;
 
   return pts;
 }
@@ -201,39 +218,39 @@ function calcScore(r) {
 function calcScoreOld(d) {
   let pts = 0;
 
-  // Old accounts have: sales, fit (A/B), vertical, contacts
-  // Use sales as a proxy for VJ revenue
-  const sales = d.sales || 0;
-  if (sales > 100000) pts += 12;
-  else if (sales >= 50000) pts += 10;
-  else if (sales >= 10000) pts += 7;
-  else if (sales > 0) pts += 4;
-
-  // Old fit was curated — A-fit accounts were better opportunities
-  if (d.fit === 'A') pts += 10;
-  else if (d.fit === 'B') pts += 5;
-
-  // Vertical alignment with marking/coding
+  // Vertical fit (same logic, using old vertical names)
   const v = (d.vertical || '').toLowerCase();
-  if (v.match(/food|bev|bak|pet|dairy|meat|fruit|vegetable|cereal|snack|confect/)) pts += 10;
-  else if (v.match(/pharma|medical|biotech|animal health/)) pts += 9;
-  else if (v.match(/packag/)) pts += 8;
-  else if (v.match(/auto|aero|transport/)) pts += 7;
-  else if (v.match(/plastic|rubber/)) pts += 6;
-  else if (v.match(/consumer|cpg/)) pts += 6;
-  else if (v.match(/chemical|building|construct/)) pts += 5;
-  else if (v.match(/beverage|brew/)) pts += 8;
-  else pts += 2;
+  if (v.match(/food|bev|bak|pet|dairy|meat|fruit|vegetable|cereal|snack|confect/)) pts += 30;
+  else if (v.match(/pharma|medical|biotech|animal health/)) pts += 28;
+  else if (v.match(/packag/)) pts += 22;
+  else if (v.match(/chemical/)) pts += 20;
+  else if (v.match(/plastic|rubber/)) pts += 18;
+  else if (v.match(/consumer|cpg/)) pts += 18;
+  else if (v.match(/auto|aero|transport/)) pts += 15;
+  else if (v.match(/building|construct/)) pts += 14;
+  else if (v.match(/beverage|brew/)) pts += 28;
+  else pts += 8; // unknown — give benefit of doubt
 
-  // Having contacts = better researched account
+  // Old fit was curated — A-fit = someone decided this was a good target
+  if (d.fit === 'A') pts += 12;
+  else if (d.fit === 'B') pts += 6;
+
+  // Revenue as proxy for existing relationship size
+  const sales = d.sales || 0;
+  if (sales > 100000) pts += 6;
+  else if (sales >= 50000) pts += 5;
+  else if (sales >= 10000) pts += 3;
+  else if (sales > 0) pts += 1;
+
+  // Having contacts = better researched, more likely a real opportunity
   if (d.contacts && d.contacts.length >= 3) pts += 3;
   else if (d.contacts && d.contacts.length >= 1) pts += 1;
 
   return pts;
 }
 
-// Grades will be assigned AFTER all accounts are scored, using percentile quartiles
-// (see below after all accounts are built)
+// Grades assigned AFTER all accounts are scored, using percentile quartiles
+// (see section 8c below)
 
 // ── 6. Determine account status ──
 function getStatus(r) {
