@@ -348,6 +348,24 @@ rows.forEach(r => {
   const compCIJ = Number(r['No of installed competitive CIJ Printers']) || 0;
   const compLaser = Number(r['No of installed competitive LASER']) || 0;
   const prodLines = Number(r['Total Number of Active Printers(VJDB)']) || Number(r['Total Number of Active Printers_CR']) || 0;
+
+  // VJ equipment breakdown by technology (use VJ ERP counts)
+  const vjEquip = {};
+  const cijTotal = (Number(r['CIJ-1000 LINE-VJ ERP'])||0) + (Number(r['CIJ-LEGACY-VJ ERP'])||0) + (Number(r['CIJ-SIMPLICITY-VJ ERP'])||0);
+  if (cijTotal > 0) vjEquip.CIJ = cijTotal;
+  const laserTotal = Number(r['LASER-VJ ERP']) || 0;
+  if (laserTotal > 0) vjEquip.Laser = laserTotal;
+  const lcmTotal = (Number(r['LCM-2300-VJ ERP'])||0) + (Number(r['LCM-OTHER-VJ ERP'])||0);
+  if (lcmTotal > 0) vjEquip.LCM = lcmTotal;
+  const ttoTotal = Number(r['TTO-VJ ERP']) || 0;
+  if (ttoTotal > 0) vjEquip.TTO = ttoTotal;
+  const tijTotal = Number(r['TIJ-VJ ERP']) || 0;
+  if (tijTotal > 0) vjEquip.TIJ = tijTotal;
+  const lpaTotal = Number(r['LPA-VJ ERP']) || 0;
+  if (lpaTotal > 0) vjEquip.LPA = lpaTotal;
+  const baTotal = Number(r['BINARY ARRAY-VJ ERP']) || 0;
+  if (baTotal > 0) vjEquip['Binary Array'] = baTotal;
+
   const city = (r['Shipping City'] || '').trim();
   const vertical = (r['Vertical'] || r['Industry'] || 'Other / Unknown').trim();
 
@@ -399,6 +417,7 @@ rows.forEach(r => {
     compCIJ,
     compLaser,
     prodLines,
+    vjEquip,
     oppNote,
     contacts
   });
@@ -1044,7 +1063,8 @@ function buildPopup(d, idx) {
       \${eff.rev012 ? \`<div class="popup-detail-row"><span>Rev 12mo</span><span class="val green">\${formatSales(eff.rev012)}</span></div>\` : ''}
       <div class="popup-detail-row"><span>YOY Trend</span><span class="val">\${trendIcon}</span></div>
       <div class="popup-detail-row"><span>Upgrade Ready</span><span class="val">\${eff.upgradeReady ? 'Yes' : 'No'}</span></div>
-      <div class="popup-detail-row"><span>Production Lines</span><span class="val">\${eff.prodLines}</span></div>
+      <div class="popup-detail-row"><span>VJ Systems</span><span class="val">\${eff.prodLines}</span></div>
+      \${eff.vjEquip && Object.keys(eff.vjEquip).length > 0 ? Object.entries(eff.vjEquip).map(([tech, count]) => \`<div class="popup-detail-row" style="padding-left:12px"><span>\${tech}</span><span class="val">\${count}</span></div>\`).join('') : ''}
       <div class="popup-detail-row"><span>Comp. CIJ</span><span class="val">\${eff.compCIJ}</span></div>
       <div class="popup-detail-row"><span>Comp. Laser</span><span class="val">\${eff.compLaser}</span></div>
       \${eff.oppNote ? \`<div class="popup-detail-row"><span>Opportunities</span><span class="val">\${eff.oppNote}</span></div>\` : ''}
@@ -1754,7 +1774,8 @@ function buildPopup(d, idx) {
       \${eff.rev012 ? \`<div class="popup-detail-row"><span>Rev 12mo</span><span class="val green">\${formatSales(eff.rev012)}</span></div>\` : ''}
       <div class="popup-detail-row"><span>YOY</span><span class="val">\${trendIcon}</span></div>
       <div class="popup-detail-row"><span>Upgrade</span><span class="val">\${eff.upgradeReady ? 'Yes' : 'No'}</span></div>
-      <div class="popup-detail-row"><span>Prod Lines</span><span class="val">\${eff.prodLines}</span></div>
+      <div class="popup-detail-row"><span>VJ Systems</span><span class="val">\${eff.prodLines}</span></div>
+      \${eff.vjEquip && Object.keys(eff.vjEquip).length > 0 ? Object.entries(eff.vjEquip).map(([tech, count]) => \`<div class="popup-detail-row" style="padding-left:10px"><span>\${tech}</span><span class="val">\${count}</span></div>\`).join('') : ''}
       <div class="popup-detail-row"><span>Comp CIJ</span><span class="val">\${eff.compCIJ}</span></div>
       <div class="popup-detail-row"><span>Comp Laser</span><span class="val">\${eff.compLaser}</span></div>
       \${eff.oppNote ? \`<div class="popup-detail-row"><span>Opps</span><span class="val">\${eff.oppNote}</span></div>\` : ''}
