@@ -525,9 +525,9 @@ existingData.forEach(d => {
 
   const score = calcScoreOld(d);
   const grade = '?'; // assigned later via percentile quartiles
-  // Any account with sales revenue = active customer (gold on map)
-  const sales = d.sales || 0;
-  const status = (d.status === 'active' || sales > 0) ? 'active' : 'prospect';
+  // Old carried-forward accounts don't have confirmed 12-month revenue
+  // Their sales field is stale historical data, not current — treat as prospect
+  const status = 'prospect';
 
   const newAcct = {
     company: d.company,
@@ -540,7 +540,7 @@ existingData.forEach(d => {
     status,
     grade,
     score,
-    rev012: Math.round(d.sales || 0),
+    rev012: 0,
     rev1224: 0,
     trend: 'unknown',
     upgradeReady: false,
