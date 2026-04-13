@@ -197,7 +197,7 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
 /* Edit modal */
 .edit-modal-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:3000; display:none; align-items:center; justify-content:center; }
 .edit-modal-overlay.open { display:flex; }
-.edit-modal { background:var(--surface); border:1px solid var(--border2); border-radius:8px; padding:20px; min-width:320px; max-width:400px; box-shadow:0 16px 48px rgba(0,0,0,0.5); }
+.edit-modal { background:var(--surface); border:1px solid var(--border2); border-radius:8px; padding:20px; min-width:320px; max-width:400px; box-shadow:0 16px 48px rgba(0,0,0,0.5); max-height:85vh; overflow-y:auto; }
 .edit-modal h3 { font-family:'Rajdhani',sans-serif; font-size:16px; color:var(--text-bright); margin-bottom:14px; }
 .edit-row { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
 .edit-row label { font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--text-dim); min-width:80px; }
@@ -207,6 +207,22 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
 .edit-btns { display:flex; gap:8px; margin-top:14px; justify-content:flex-end; }
 .edit-btn { padding:7px 14px; border-radius:4px; font-family:'IBM Plex Mono',monospace; font-size:11px; cursor:pointer; border:1px solid var(--border2); background:var(--bg); color:var(--text-dim); transition:all 0.15s; }
 .edit-btn:hover { border-color:var(--accent); color:var(--accent); }
+.edit-contacts-list { margin:6px 0; max-height:150px; overflow-y:auto; }
+.edit-contact-item { display:flex; align-items:center; gap:6px; padding:4px 6px; margin-bottom:4px; background:var(--bg); border:1px solid var(--border); border-radius:4px; font-size:11px; font-family:'IBM Plex Mono',monospace; color:var(--text); }
+.edit-contact-item .del-contact { cursor:pointer; color:#FF6B6B; font-size:14px; margin-left:auto; flex-shrink:0; }
+.edit-contact-item .del-contact:hover { color:#FF4444; }
+.add-contact-row { display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; }
+.add-contact-row input { background:var(--bg); border:1px solid var(--border2); border-radius:4px; color:var(--text-bright); padding:4px 6px; font-size:11px; font-family:'IBM Plex Sans',sans-serif; flex:1; min-width:80px; outline:none; }
+.add-contact-row input:focus { border-color:var(--accent); }
+.add-contact-btn { padding:4px 10px; border-radius:4px; font-family:'IBM Plex Mono',monospace; font-size:10px; cursor:pointer; border:1px solid var(--a-color); color:var(--a-color); background:rgba(46,204,113,0.08); margin-top:4px; }
+.add-contact-btn:hover { background:rgba(46,204,113,0.15); }
+.edit-section-label { font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--accent); text-transform:uppercase; letter-spacing:1px; margin:12px 0 6px; }
+.call-notes-log { max-height:120px; overflow-y:auto; margin:4px 0; }
+.call-note-entry { padding:4px 6px; margin-bottom:3px; background:var(--bg); border:1px solid var(--border); border-radius:4px; font-size:11px; font-family:'IBM Plex Mono',monospace; color:var(--text); }
+.call-note-entry .cn-ts { color:var(--accent); font-size:9px; }
+.call-note-add { display:flex; gap:4px; margin-top:4px; }
+.call-note-add textarea { background:var(--bg); border:1px solid var(--border2); border-radius:4px; color:var(--text-bright); padding:6px; font-size:11px; font-family:'IBM Plex Sans',sans-serif; flex:1; min-height:40px; resize:vertical; outline:none; }
+.call-note-add textarea:focus { border-color:var(--accent); }
 .edit-btn.save { border-color:var(--a-color); color:var(--a-color); background:rgba(46,204,113,0.08); }
 .edit-btn.danger { border-color:#FF6B6B; color:#FF6B6B; }
 .edit-btn.danger:hover { background:rgba(255,107,107,0.1); }
@@ -384,11 +400,34 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
 <div class="edit-modal-overlay" id="edit-modal">
   <div class="edit-modal">
     <h3 id="edit-modal-title">Edit Account</h3>
+    <div class="edit-row"><label>Name</label><input id="edit-name" type="text" placeholder="Override display name"></div>
+    <div class="edit-row"><label>Address</label><input id="edit-address" type="text" placeholder="Street address"></div>
     <div class="edit-row"><label>Star</label><select id="edit-star"><option value="0">No</option><option value="1">&#x2B50; Yes</option></select></div>
     <div class="edit-row"><label>Trial/Opp</label><select id="edit-ring"><option value="0">No</option><option value="1">&#x1F534; Active Trial</option></select></div>
     <div class="edit-row"><label>Grade</label><select id="edit-grade"><option value="">Auto</option><option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option></select></div>
     <div class="edit-row"><label>Status</label><select id="edit-status"><option value="">Auto</option><option value="active">Active Customer</option><option value="lapsed">Lapsed Customer</option><option value="dormant">Dormant</option><option value="prospect">Prospect</option></select></div>
+    <div class="edit-row"><label>Vertical</label><select id="edit-vertical"><option value="">Auto</option><option value="Food">Food</option><option value="Beverage">Beverage</option><option value="Pet Food">Pet Food</option><option value="Pharma">Pharma</option><option value="Packaging">Packaging</option><option value="Aero/Defense">Aero/Defense</option><option value="Auto/Trans">Auto/Trans</option><option value="Chemical">Chemical</option><option value="Plastics">Plastics</option><option value="Building">Building</option><option value="Industrial">Industrial</option><option value="Electronics">Electronics</option><option value="CPG">CPG</option><option value="Graphics">Graphics</option><option value="Other / Unknown">Other</option></select></div>
+    <div class="edit-row"><label>Last Visited</label><input id="edit-lastvisited" type="date"></div>
+    <div class="edit-row"><label>Competitor</label><input id="edit-competitor" type="text" placeholder="e.g. Markem CIJ x3 on line 2"></div>
     <div class="edit-row"><label>Note</label><textarea id="edit-note" placeholder="Add a note..."></textarea></div>
+
+    <div class="edit-section-label">Contacts</div>
+    <div class="edit-contacts-list" id="edit-contacts-list"></div>
+    <div class="add-contact-row" id="add-contact-row">
+      <input id="ac-name" type="text" placeholder="Name">
+      <input id="ac-title" type="text" placeholder="Title">
+      <input id="ac-phone" type="text" placeholder="Phone">
+      <input id="ac-email" type="text" placeholder="Email">
+    </div>
+    <div class="add-contact-btn" onclick="addEditContact()">+ Add Contact</div>
+
+    <div class="edit-section-label">Call Notes Log</div>
+    <div class="call-notes-log" id="edit-callnotes-log"></div>
+    <div class="call-note-add">
+      <textarea id="edit-callnote-new" placeholder="Type a new call note..."></textarea>
+      <div class="add-contact-btn" onclick="addCallNote()" style="align-self:flex-end">Add Entry</div>
+    </div>
+
     <div class="edit-btns">
       <div class="edit-btn danger" id="edit-delete-btn">Delete</div>
       <div class="edit-btn" onclick="closeEditModal()">Cancel</div>
@@ -482,14 +521,22 @@ function getEffective(d, idx) {
   const edits = loadEdits();
   const key = getEditKey(d);
   const e = edits[key] || {};
+  const contacts = e.contacts || d.contacts || [];
   return {
     ...d,
+    company: e.companyName || d.company,
+    address: e.address || d.address,
+    vertical: e.vertical || d.vertical,
     grade: e.grade || d.grade,
     status: e.status || d.status,
     star: !!e.star,
     ring: !!e.ring,
     note: e.note || '',
-    deleted: !!e.deleted
+    deleted: !!e.deleted,
+    lastVisited: e.lastVisited || '',
+    competitorInfo: e.competitorInfo || '',
+    callNotes: e.callNotes || [],
+    contacts: contacts
   };
 }
 
@@ -614,6 +661,9 @@ function buildPopup(d, idx) {
       ${eff.oppNote ? `<div class="popup-detail-row"><span>Opportunities</span><span class="val">${eff.oppNote}</span></div>` : ''}
     </div>
     ${eff.note ? `<div class="popup-note">${eff.note}</div>` : ''}
+    ${eff.lastVisited ? `<div class="popup-note" style="margin-top:4px;font-size:10px"><strong>Last Visited:</strong> ${eff.lastVisited}</div>` : ''}
+    ${eff.competitorInfo ? `<div class="popup-note" style="margin-top:4px;font-size:10px"><strong>Competitor:</strong> ${eff.competitorInfo}</div>` : ''}
+    ${eff.callNotes && eff.callNotes.length > 0 ? `<div class="popup-note" style="margin-top:4px;font-size:10px"><strong>Call Notes:</strong>${eff.callNotes.map(n => `<div style="margin:2px 0;padding:2px 4px;background:rgba(0,0,0,0.15);border-radius:3px"><span style="color:var(--accent);font-size:9px">${n.ts}</span> ${n.text}</div>`).join('')}</div>` : ''}
     <div class="popup-actions">
       ${hasContacts ? `<div class="popup-btn primary" onclick="showContacts(${idx})">&#x1F465; Contacts (${eff.contacts.length})</div>` : '<div style="font-size:10px;color:var(--text-dim);font-style:italic;margin-top:4px;font-family:IBM Plex Mono,monospace">No contacts on file</div>'}
       <div class="popup-btn" onclick="openEditModal(${idx})">&#x270F;&#xFE0F; Edit</div>
@@ -810,6 +860,19 @@ window.openEditModal = function(idx) {
   const e = edits[key] || {};
   if (e.grade) document.getElementById('edit-grade').value = e.grade;
   if (e.status) document.getElementById('edit-status').value = e.status;
+  document.getElementById('edit-name').value = e.companyName || '';
+  document.getElementById('edit-address').value = e.address || d.address || '';
+  document.getElementById('edit-vertical').value = e.vertical || '';
+  document.getElementById('edit-lastvisited').value = e.lastVisited || '';
+  document.getElementById('edit-competitor').value = e.competitorInfo || '';
+
+  // Populate contacts list
+  window._editContacts = JSON.parse(JSON.stringify(eff.contacts || []));
+  renderEditContacts();
+
+  // Populate call notes log
+  window._editCallNotes = e.callNotes || [];
+  renderCallNotes();
 
   document.getElementById('edit-delete-btn').onclick = function() {
     if (confirm('Delete ' + eff.company + ' from the map?')) {
@@ -839,8 +902,13 @@ window.saveEdit = function() {
   const grade = document.getElementById('edit-grade').value || null;
   const status = document.getElementById('edit-status').value || null;
   const note = document.getElementById('edit-note').value.trim();
+  const companyName = document.getElementById('edit-name').value.trim() || null;
+  const address = document.getElementById('edit-address').value.trim() || null;
+  const vertical = document.getElementById('edit-vertical').value || null;
+  const lastVisited = document.getElementById('edit-lastvisited').value || null;
+  const competitorInfo = document.getElementById('edit-competitor').value.trim() || null;
 
-  edits[key] = { ...existing, star, ring, grade, status, note };
+  edits[key] = { ...existing, star, ring, grade, status, note, companyName, address, vertical, lastVisited, competitorInfo, contacts: window._editContacts, callNotes: window._editCallNotes || [] };
   saveEdits(edits);
   closeEditModal();
   render();
@@ -849,6 +917,59 @@ window.saveEdit = function() {
 window.closeEditModal = function() {
   document.getElementById('edit-modal').classList.remove('open');
   editingIdx = null;
+};
+
+window._editContacts = [];
+window._editCallNotes = [];
+
+function renderEditContacts() {
+  const list = document.getElementById('edit-contacts-list');
+  if (!window._editContacts || window._editContacts.length === 0) {
+    list.innerHTML = '<div style="font-size:10px;color:var(--text-dim);font-style:italic;font-family:IBM Plex Mono,monospace;padding:4px">No contacts</div>';
+    return;
+  }
+  list.innerHTML = window._editContacts.map((c, i) => `<div class="edit-contact-item">
+    <span>${c.name || 'Unknown'}${c.title ? ' — ' + c.title : ''}${c.phone ? ' | ' + c.phone : ''}${c.email ? ' | ' + c.email : ''}</span>
+    <span class="del-contact" onclick="deleteEditContact(${i})">&times;</span>
+  </div>`).join('');
+}
+
+window.deleteEditContact = function(i) {
+  window._editContacts.splice(i, 1);
+  renderEditContacts();
+};
+
+window.addEditContact = function() {
+  const name = document.getElementById('ac-name').value.trim();
+  const title = document.getElementById('ac-title').value.trim();
+  const phone = document.getElementById('ac-phone').value.trim();
+  const email = document.getElementById('ac-email').value.trim();
+  if (!name) { alert('Contact name is required'); return; }
+  window._editContacts.push({ name, title, phone, email });
+  document.getElementById('ac-name').value = '';
+  document.getElementById('ac-title').value = '';
+  document.getElementById('ac-phone').value = '';
+  document.getElementById('ac-email').value = '';
+  renderEditContacts();
+};
+
+function renderCallNotes() {
+  const log = document.getElementById('edit-callnotes-log');
+  if (!window._editCallNotes || window._editCallNotes.length === 0) {
+    log.innerHTML = '<div style="font-size:10px;color:var(--text-dim);font-style:italic;font-family:IBM Plex Mono,monospace;padding:4px">No call notes yet</div>';
+    return;
+  }
+  log.innerHTML = window._editCallNotes.map(n => `<div class="call-note-entry"><div class="cn-ts">${n.ts}</div><div>${n.text}</div></div>`).join('');
+}
+
+window.addCallNote = function() {
+  const text = document.getElementById('edit-callnote-new').value.trim();
+  if (!text) return;
+  const ts = new Date().toLocaleString();
+  if (!window._editCallNotes) window._editCallNotes = [];
+  window._editCallNotes.unshift({ ts, text });
+  document.getElementById('edit-callnote-new').value = '';
+  renderCallNotes();
 };
 
 // ── Add Account ──
