@@ -209,8 +209,15 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
 .edit-btn:hover { border-color:var(--accent); color:var(--accent); }
 .edit-contacts-list { margin:6px 0; max-height:150px; overflow-y:auto; }
 .edit-contact-item { display:flex; align-items:center; gap:6px; padding:4px 6px; margin-bottom:4px; background:var(--bg); border:1px solid var(--border); border-radius:4px; font-size:11px; font-family:'IBM Plex Mono',monospace; color:var(--text); }
-.edit-contact-item .del-contact { cursor:pointer; color:#FF6B6B; font-size:14px; margin-left:auto; flex-shrink:0; }
+.edit-contact-item .ec-actions { display:flex; gap:4px; margin-left:auto; flex-shrink:0; align-items:center; }
+.edit-contact-item .edit-contact { cursor:pointer; color:var(--text-dim); font-size:12px; opacity:0.6; transition:opacity 0.15s, color 0.15s; }
+.edit-contact-item .edit-contact:hover { opacity:1; color:var(--accent); }
+.edit-contact-item .del-contact { cursor:pointer; color:#FF6B6B; font-size:14px; }
 .edit-contact-item .del-contact:hover { color:#FF4444; }
+.ec-verified { color:#FFD700; font-size:11px; margin-right:2px; }
+.contact-verified-toggle { display:flex; align-items:center; gap:4px; margin-top:4px; font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--text); cursor:pointer; user-select:none; }
+.contact-verified-toggle input { accent-color:#FFD700; }
+.cp-verified { font-family:'IBM Plex Mono',monospace; font-size:8px; font-weight:700; padding:1px 5px; border-radius:2px; background:rgba(255,215,0,0.15); color:#FFD700; border:1px solid rgba(255,215,0,0.3); }
 .add-contact-row { display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; }
 .add-contact-row input { background:var(--bg); border:1px solid var(--border2); border-radius:4px; color:var(--text-bright); padding:4px 6px; font-size:11px; font-family:'IBM Plex Sans',sans-serif; flex:1; min-width:80px; outline:none; }
 .add-contact-row input:focus { border-color:var(--accent); }
@@ -437,7 +444,11 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
       <input id="ac-phone" type="text" placeholder="Phone">
       <input id="ac-email" type="text" placeholder="Email">
     </div>
-    <div class="add-contact-btn" onclick="addEditContact()">+ Add Contact</div>
+    <label class="contact-verified-toggle"><input type="checkbox" id="ac-verified"> &#x2B50; Verified best contact</label>
+    <div style="display:flex;gap:4px;margin-top:4px">
+      <div class="add-contact-btn" id="ac-submit-btn" onclick="addEditContact()">+ Add Contact</div>
+      <div class="add-contact-btn" id="ac-cancel-btn" onclick="cancelEditContact()" style="display:none;border-color:var(--text-dim);color:var(--text-dim)">Cancel</div>
+    </div>
 
     <div class="edit-section-label">Call Notes Log</div>
     <div class="call-notes-log" id="edit-callnotes-log"></div>
@@ -847,6 +858,7 @@ window.showContacts = function(idx) {
       return `<div class="cp-contact ${fitClass}">
         <div class="cp-name">
           ${c.name}
+          ${c.verified ? '<span class="cp-verified">&#x2B50; VERIFIED</span>' : ''}
           ${c.dm ? '<span class="cp-dm-badge">&#x2605; DM</span>' : ''}
           ${isEquip ? '<span class="cp-equip-badge">EQUIP</span>' : ''}
         </div>
@@ -946,10 +958,12 @@ window.saveEdit = function() {
 window.closeEditModal = function() {
   document.getElementById('edit-modal').classList.remove('open');
   editingIdx = null;
+  window._editingContactIdx = null;
 };
 
 window._editContacts = [];
 window._editCallNotes = [];
+window._editingContactIdx = null;
 
 function renderEditContacts() {
   const list = document.getElementById('edit-contacts-list');
@@ -957,14 +971,45 @@ function renderEditContacts() {
     list.innerHTML = '<div style="font-size:10px;color:var(--text-dim);font-style:italic;font-family:IBM Plex Mono,monospace;padding:4px">No contacts</div>';
     return;
   }
-  list.innerHTML = window._editContacts.map((c, i) => `<div class="edit-contact-item">
+  list.innerHTML = window._editContacts.map((c, i) => `<div class="edit-contact-item${window._editingContactIdx === i ? ' editing' : ''}">
+    ${c.verified ? '<span class="ec-verified">&#x2B50;</span>' : ''}
     <span>${c.name || 'Unknown'}${c.title ? ' — ' + c.title : ''}${c.phone ? ' | ' + c.phone : ''}${c.email ? ' | ' + c.email : ''}</span>
-    <span class="del-contact" onclick="deleteEditContact(${i})">&times;</span>
+    <span class="ec-actions">
+      <span class="edit-contact" onclick="startEditContact(${i})" title="Edit">&#x270F;</span>
+      <span class="del-contact" onclick="deleteEditContact(${i})" title="Delete">&times;</span>
+    </span>
   </div>`).join('');
 }
 
+window.startEditContact = function(i) {
+  const c = window._editContacts[i];
+  document.getElementById('ac-name').value = c.name || '';
+  document.getElementById('ac-title').value = c.title || '';
+  document.getElementById('ac-phone').value = c.phone || '';
+  document.getElementById('ac-email').value = c.email || '';
+  document.getElementById('ac-verified').checked = !!c.verified;
+  window._editingContactIdx = i;
+  document.getElementById('ac-submit-btn').textContent = 'Update Contact';
+  document.getElementById('ac-cancel-btn').style.display = '';
+  renderEditContacts();
+};
+
+window.cancelEditContact = function() {
+  window._editingContactIdx = null;
+  document.getElementById('ac-name').value = '';
+  document.getElementById('ac-title').value = '';
+  document.getElementById('ac-phone').value = '';
+  document.getElementById('ac-email').value = '';
+  document.getElementById('ac-verified').checked = false;
+  document.getElementById('ac-submit-btn').textContent = '+ Add Contact';
+  document.getElementById('ac-cancel-btn').style.display = 'none';
+  renderEditContacts();
+};
+
 window.deleteEditContact = function(i) {
   window._editContacts.splice(i, 1);
+  if (window._editingContactIdx === i) cancelEditContact();
+  else if (window._editingContactIdx !== null && window._editingContactIdx > i) window._editingContactIdx--;
   renderEditContacts();
 };
 
@@ -973,12 +1018,22 @@ window.addEditContact = function() {
   const title = document.getElementById('ac-title').value.trim();
   const phone = document.getElementById('ac-phone').value.trim();
   const email = document.getElementById('ac-email').value.trim();
+  const verified = document.getElementById('ac-verified').checked;
   if (!name) { alert('Contact name is required'); return; }
-  window._editContacts.push({ name, title, phone, email });
+  if (window._editingContactIdx !== null) {
+    const existing = window._editContacts[window._editingContactIdx];
+    window._editContacts[window._editingContactIdx] = { ...existing, name, title, phone, email, verified };
+    window._editingContactIdx = null;
+    document.getElementById('ac-submit-btn').textContent = '+ Add Contact';
+    document.getElementById('ac-cancel-btn').style.display = 'none';
+  } else {
+    window._editContacts.push({ name, title, phone, email, verified });
+  }
   document.getElementById('ac-name').value = '';
   document.getElementById('ac-title').value = '';
   document.getElementById('ac-phone').value = '';
   document.getElementById('ac-email').value = '';
+  document.getElementById('ac-verified').checked = false;
   renderEditContacts();
 };
 
