@@ -219,7 +219,9 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
 .edit-section-label { font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--accent); text-transform:uppercase; letter-spacing:1px; margin:12px 0 6px; }
 .call-notes-log { max-height:120px; overflow-y:auto; margin:4px 0; }
 .call-note-entry { padding:4px 6px; margin-bottom:3px; background:var(--bg); border:1px solid var(--border); border-radius:4px; font-size:11px; font-family:'IBM Plex Mono',monospace; color:var(--text); }
-.call-note-entry .cn-ts { color:var(--accent); font-size:9px; }
+.call-note-entry .cn-ts { color:var(--accent); font-size:9px; display:flex; justify-content:space-between; align-items:center; }
+.cn-delete { cursor:pointer; color:var(--text-dim); font-size:11px; padding:0 2px; margin-left:8px; opacity:0.6; transition:opacity 0.15s, color 0.15s; }
+.cn-delete:hover { opacity:1; color:#FF6B6B; }
 .call-note-add { display:flex; gap:4px; margin-top:4px; }
 .call-note-add textarea { background:var(--bg); border:1px solid var(--border2); border-radius:4px; color:var(--text-bright); padding:6px; font-size:11px; font-family:'IBM Plex Sans',sans-serif; flex:1; min-height:40px; resize:vertical; outline:none; }
 .call-note-add textarea:focus { border-color:var(--accent); }
@@ -360,6 +362,22 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
           <div class="pill" data-val="10-50k">$10-50K</div>
           <div class="pill" data-val="50-100k">$50-100K</div>
           <div class="pill" data-val="100k+">$100K+</div>
+        </div>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Starred</span>
+        <div class="filter-pills" id="starred-filter">
+          <div class="pill active" data-val="ALL">All</div>
+          <div class="pill" data-val="Y">&#x2B50; Starred</div>
+          <div class="pill" data-val="N">Not Starred</div>
+        </div>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Comments</span>
+        <div class="filter-pills" id="commented-filter">
+          <div class="pill active" data-val="ALL">All</div>
+          <div class="pill" data-val="Y">Has Comments</div>
+          <div class="pill" data-val="N">No Comments</div>
         </div>
       </div>
     </div>
@@ -541,7 +559,7 @@ function getEffective(d, idx) {
 }
 
 // ── State ──
-let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', rev:'ALL', search:'' };
+let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', rev:'ALL', starred:'ALL', commented:'ALL', search:'' };
 let markers = [];
 let selectedIdx = null;
 
@@ -611,6 +629,15 @@ function matchesFilters(d) {
     if (filters.rev === '10-50k' && (r < 10000 || r >= 50000)) return false;
     if (filters.rev === '50-100k' && (r < 50000 || r >= 100000)) return false;
     if (filters.rev === '100k+' && r < 100000) return false;
+  }
+  if (filters.starred !== 'ALL') {
+    if (filters.starred === 'Y' && !eff.star) return false;
+    if (filters.starred === 'N' && eff.star) return false;
+  }
+  if (filters.commented !== 'ALL') {
+    const hasComments = (eff.note && eff.note.trim().length > 0) || (eff.callNotes && eff.callNotes.length > 0);
+    if (filters.commented === 'Y' && !hasComments) return false;
+    if (filters.commented === 'N' && hasComments) return false;
   }
   if (filters.search) {
     const s = filters.search.toLowerCase();
@@ -782,6 +809,8 @@ setupPillGroup('upgrade-filter', 'upgrade');
 setupPillGroup('contacts-filter', 'contacts');
 setupPillGroup('opps-filter', 'opps');
 setupPillGroup('rev-filter', 'rev');
+setupPillGroup('starred-filter', 'starred');
+setupPillGroup('commented-filter', 'commented');
 
 document.getElementById('search').addEventListener('input', e => {
   filters.search = e.target.value.trim();
@@ -790,7 +819,7 @@ document.getElementById('search').addEventListener('input', e => {
 });
 
 document.getElementById('clear-filters').addEventListener('click', () => {
-  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', rev:'ALL', search:'' };
+  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', rev:'ALL', starred:'ALL', commented:'ALL', search:'' };
   document.getElementById('search').value = '';
   document.querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.val === 'ALL'));
   selectedIdx = null;
@@ -959,8 +988,14 @@ function renderCallNotes() {
     log.innerHTML = '<div style="font-size:10px;color:var(--text-dim);font-style:italic;font-family:IBM Plex Mono,monospace;padding:4px">No call notes yet</div>';
     return;
   }
-  log.innerHTML = window._editCallNotes.map(n => `<div class="call-note-entry"><div class="cn-ts">${n.ts}</div><div>${n.text}</div></div>`).join('');
+  log.innerHTML = window._editCallNotes.map((n, i) => `<div class="call-note-entry" style="position:relative"><div class="cn-ts">${n.ts}<span class="cn-delete" onclick="deleteCallNote(${i})" title="Delete note">&#x2715;</span></div><div>${n.text}</div></div>`).join('');
 }
+
+window.deleteCallNote = function(idx) {
+  if (!window._editCallNotes) return;
+  window._editCallNotes.splice(idx, 1);
+  renderCallNotes();
+};
 
 window.addCallNote = function() {
   const text = document.getElementById('edit-callnote-new').value.trim();

@@ -1173,6 +1173,22 @@ header::after { content:''; position:absolute; bottom:0; left:0; right:0; height
           <div class="pill" data-val="100k+">$100K+</div>
         </div>
       </div>
+      <div class="filter-group">
+        <span class="filter-label">Starred</span>
+        <div class="filter-pills" id="starred-filter">
+          <div class="pill active" data-val="ALL">All</div>
+          <div class="pill" data-val="Y">&#x2B50; Starred</div>
+          <div class="pill" data-val="N">Not Starred</div>
+        </div>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Comments</span>
+        <div class="filter-pills" id="commented-filter">
+          <div class="pill active" data-val="ALL">All</div>
+          <div class="pill" data-val="Y">Has Comments</div>
+          <div class="pill" data-val="N">No Comments</div>
+        </div>
+      </div>
     </div>
     <div class="results-header">
       <div class="results-count">Showing <span id="result-count">0</span> accounts</div>
@@ -1321,7 +1337,7 @@ function getEffective(d, idx) {
 }
 
 // ── State ──
-let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', rev:'ALL', search:'' };
+let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', rev:'ALL', starred:'ALL', commented:'ALL', search:'' };
 let markers = [];
 let selectedIdx = null;
 
@@ -1391,6 +1407,15 @@ function matchesFilters(d) {
     if (filters.rev === '10-50k' && (r < 10000 || r >= 50000)) return false;
     if (filters.rev === '50-100k' && (r < 50000 || r >= 100000)) return false;
     if (filters.rev === '100k+' && r < 100000) return false;
+  }
+  if (filters.starred !== 'ALL') {
+    if (filters.starred === 'Y' && !eff.star) return false;
+    if (filters.starred === 'N' && eff.star) return false;
+  }
+  if (filters.commented !== 'ALL') {
+    const hasComments = (eff.note && eff.note.trim().length > 0) || (eff.callNotes && eff.callNotes.length > 0);
+    if (filters.commented === 'Y' && !hasComments) return false;
+    if (filters.commented === 'N' && hasComments) return false;
   }
   if (filters.search) {
     const s = filters.search.toLowerCase();
@@ -1559,6 +1584,8 @@ setupPillGroup('upgrade-filter', 'upgrade');
 setupPillGroup('contacts-filter', 'contacts');
 setupPillGroup('opps-filter', 'opps');
 setupPillGroup('rev-filter', 'rev');
+setupPillGroup('starred-filter', 'starred');
+setupPillGroup('commented-filter', 'commented');
 
 document.getElementById('search').addEventListener('input', e => {
   filters.search = e.target.value.trim();
@@ -1567,7 +1594,7 @@ document.getElementById('search').addEventListener('input', e => {
 });
 
 document.getElementById('clear-filters').addEventListener('click', () => {
-  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', rev:'ALL', search:'' };
+  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', rev:'ALL', starred:'ALL', commented:'ALL', search:'' };
   document.getElementById('search').value = '';
   document.querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.val === 'ALL'));
   selectedIdx = null;
@@ -2080,6 +2107,22 @@ html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); col
         <div class="pill" data-val="100k+">$100K+</div>
       </div>
     </div>
+    <div class="filter-section">
+      <div class="filter-lbl">Starred</div>
+      <div class="filter-pills" id="f-starred">
+        <div class="pill active" data-val="ALL">All</div>
+        <div class="pill" data-val="Y">&#x2B50; Starred</div>
+        <div class="pill" data-val="N">Not Starred</div>
+      </div>
+    </div>
+    <div class="filter-section">
+      <div class="filter-lbl">Comments</div>
+      <div class="filter-pills" id="f-commented">
+        <div class="pill active" data-val="ALL">All</div>
+        <div class="pill" data-val="Y">Has Comments</div>
+        <div class="pill" data-val="N">No Comments</div>
+      </div>
+    </div>
     <div id="legend-row">
       <div class="leg-item"><div class="leg-dot" style="background:var(--active-color)"></div> Active</div>
       <div class="leg-item"><div class="leg-dot" style="background:var(--lapsed-color)"></div> Lapsed</div>
@@ -2198,7 +2241,7 @@ function getEffective(d) {
 const map = L.map('map', { center:[38.8,-96.5], zoom:6, zoomControl:true });
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom:19, subdomains:'abcd' }).addTo(map);
 
-let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', rev:'ALL', search:'' };
+let filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', rev:'ALL', starred:'ALL', commented:'ALL', search:'' };
 let markers = [];
 const plainGroup = L.layerGroup().addTo(map);
 
@@ -2267,6 +2310,15 @@ function matchesFilters(d) {
     if (filters.rev === '10-50k' && (r < 10000 || r >= 50000)) return false;
     if (filters.rev === '50-100k' && (r < 50000 || r >= 100000)) return false;
     if (filters.rev === '100k+' && r < 100000) return false;
+  }
+  if (filters.starred !== 'ALL') {
+    if (filters.starred === 'Y' && !eff.star) return false;
+    if (filters.starred === 'N' && eff.star) return false;
+  }
+  if (filters.commented !== 'ALL') {
+    const hasComments = (eff.note && eff.note.trim().length > 0) || (eff.callNotes && eff.callNotes.length > 0);
+    if (filters.commented === 'Y' && !hasComments) return false;
+    if (filters.commented === 'N' && hasComments) return false;
   }
   if (filters.search) {
     const s = filters.search.toLowerCase();
@@ -2383,13 +2435,15 @@ setupPills('f-upgrade','upgrade');
 setupPills('f-contacts','contacts');
 setupPills('f-opps','opps');
 setupPills('f-rev','rev');
+setupPills('f-starred','starred');
+setupPills('f-commented','commented');
 
 document.getElementById('search').addEventListener('input', e => { filters.search = e.target.value.trim(); render(); });
 
 window.resetFilters = function() {
-  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', rev:'ALL', search:'' };
+  filters = { state:'ALL', grade:'ALL', status:'ALL', vert:'ALL', health:'ALL', upgrade:'ALL', contacts:'ALL', opps:'ALL', rev:'ALL', starred:'ALL', commented:'ALL', search:'' };
   document.getElementById('search').value = '';
-  ['f-state','f-grade','f-status','f-vert'].forEach(id => {
+  ['f-state','f-grade','f-status','f-vert','f-health','f-upgrade','f-contacts','f-opps','f-rev','f-starred','f-commented'].forEach(id => {
     document.getElementById(id).querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.val==='ALL'));
   });
   render();
