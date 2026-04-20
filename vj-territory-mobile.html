@@ -170,20 +170,39 @@ html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); col
 .edit-btn { padding:7px 14px; border-radius:4px; font-family:'IBM Plex Mono',monospace; font-size:11px; cursor:pointer; border:1px solid var(--border2); background:var(--bg); color:var(--text-dim); }
 .edit-btn.save { border-color:var(--a-color); color:var(--a-color); }
 .edit-btn.danger { border-color:#FF6B6B; color:#FF6B6B; }
-.edit-contacts-list { margin:6px 0; max-height:120px; overflow-y:auto; }
-.edit-contact-item { display:flex; align-items:center; gap:4px; padding:4px 6px; margin-bottom:3px; background:var(--bg); border:1px solid var(--border); border-radius:4px; font-size:10px; font-family:'IBM Plex Mono',monospace; color:var(--text); }
-.edit-contact-item .ec-actions { display:flex; gap:6px; margin-left:auto; flex-shrink:0; align-items:center; }
-.edit-contact-item .edit-contact { cursor:pointer; color:var(--text-dim); font-size:14px; opacity:0.6; transition:opacity 0.15s, color 0.15s; }
-.edit-contact-item .edit-contact:active { opacity:1; color:var(--accent); }
-.edit-contact-item .del-contact { cursor:pointer; color:#FF6B6B; font-size:16px; }
-.ec-verified { color:#FFD700; font-size:11px; margin-right:2px; }
-.contact-verified-toggle { display:flex; align-items:center; gap:4px; margin-top:4px; font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--text); cursor:pointer; user-select:none; }
-.contact-verified-toggle input { accent-color:#FFD700; width:16px; height:16px; }
+.edit-contacts-list { margin:6px 0; max-height:240px; overflow-y:auto; }
+.ec-card { padding:8px; margin-bottom:6px; background:var(--bg); border:1px solid var(--border); border-radius:4px; font-size:10px; font-family:'IBM Plex Mono',monospace; }
+.ec-card-header { display:flex; align-items:center; gap:6px; margin-bottom:4px; }
+.ec-card-header .ec-star { cursor:pointer; font-size:16px; opacity:0.3; transition:opacity 0.15s; user-select:none; }
+.ec-card-header .ec-star.active { opacity:1; }
+.ec-card-header .ec-name { font-weight:600; color:var(--text-bright); flex:1; font-size:11px; }
+.ec-card-header .ec-del { cursor:pointer; color:var(--text-dim); font-size:16px; padding:2px 4px; transition:color 0.15s; }
+.ec-card-header .ec-del:active { color:#FF6B6B; }
+.ec-card .ec-field { display:flex; gap:4px; margin-top:3px; }
+.ec-card .ec-field label { font-size:9px; color:var(--text-dim); min-width:36px; padding-top:5px; }
+.ec-card .ec-field input { background:var(--surface); border:1px solid var(--border); border-radius:3px; color:var(--text-bright); padding:4px 5px; font-size:12px; font-family:'IBM Plex Sans',sans-serif; flex:1; outline:none; }
+.ec-card .ec-field input:focus { border-color:var(--accent); }
 .cp-verified { font-family:'IBM Plex Mono',monospace; font-size:8px; font-weight:700; padding:1px 5px; border-radius:2px; background:rgba(255,215,0,0.12); color:#FFD700; border:1px solid rgba(255,215,0,0.3); }
-.add-contact-row { display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; }
-.add-contact-row input { background:var(--bg); border:1px solid var(--border2); border-radius:4px; color:var(--text-bright); padding:4px 6px; font-size:10px; font-family:'IBM Plex Sans',sans-serif; flex:1; min-width:70px; outline:none; }
-.add-contact-row input:focus { border-color:var(--accent); }
-.add-contact-btn { padding:4px 8px; border-radius:4px; font-family:'IBM Plex Mono',monospace; font-size:10px; cursor:pointer; border:1px solid var(--a-color); color:var(--a-color); background:rgba(46,204,113,0.08); margin-top:4px; }
+.add-contact-btn { padding:6px 10px; border-radius:4px; font-family:'IBM Plex Mono',monospace; font-size:10px; cursor:pointer; border:1px solid var(--a-color); color:var(--a-color); background:rgba(46,204,113,0.08); margin-top:4px; }
+/* Merge modal */
+.merge-modal { background:var(--surface); border:1px solid var(--border2); border-radius:8px; padding:16px; width:calc(100vw - 32px); max-width:500px; box-shadow:0 16px 48px rgba(0,0,0,0.5); max-height:85vh; overflow-y:auto; box-sizing:border-box; }
+.merge-search { width:100%; background:var(--bg); border:1px solid var(--border2); border-radius:4px; color:var(--text-bright); padding:8px 10px; font-size:13px; font-family:'IBM Plex Sans',sans-serif; outline:none; margin-bottom:8px; box-sizing:border-box; }
+.merge-search:focus { border-color:var(--accent); }
+.merge-results { max-height:180px; overflow-y:auto; margin-bottom:10px; }
+.merge-result-item { padding:8px 10px; cursor:pointer; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--text); border-bottom:1px solid var(--border); }
+.merge-result-item:active { background:rgba(0,212,255,0.12); }
+.merge-result-item .mr-company { color:var(--text-bright); font-weight:600; }
+.merge-result-item .mr-detail { color:var(--text-dim); font-size:10px; display:block; margin-top:2px; }
+.merge-preview { display:none; }
+.merge-compare { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:8px 0; }
+.merge-col { background:var(--bg); border:1px solid var(--border); border-radius:4px; padding:8px; }
+.merge-col h4 { font-family:'IBM Plex Mono',monospace; font-size:9px; color:var(--accent); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px; }
+.merge-col .mc-row { font-family:'IBM Plex Mono',monospace; font-size:9px; color:var(--text); margin-bottom:2px; }
+.merge-col .mc-row strong { color:var(--text-bright); }
+.merge-keep-label { font-family:'IBM Plex Mono',monospace; font-size:9px; color:var(--text-dim); margin:6px 0 4px; }
+.merge-keep-row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:6px; font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--text); }
+.merge-keep-row label { cursor:pointer; display:flex; align-items:center; gap:3px; }
+.merge-keep-row input[type="radio"] { accent-color:var(--accent); width:14px; height:14px; }
 .edit-section-label { font-family:'IBM Plex Mono',monospace; font-size:9px; color:var(--accent); text-transform:uppercase; letter-spacing:1px; margin:10px 0 4px; }
 .call-notes-log { max-height:100px; overflow-y:auto; margin:4px 0; }
 .call-note-entry { padding:3px 6px; margin-bottom:3px; background:var(--bg); border:1px solid var(--border); border-radius:4px; font-size:10px; font-family:'IBM Plex Mono',monospace; color:var(--text); }
@@ -396,17 +415,7 @@ html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); col
 
     <div class="edit-section-label">Contacts</div>
     <div class="edit-contacts-list" id="edit-contacts-list"></div>
-    <div class="add-contact-row" id="add-contact-row">
-      <input id="ac-name" type="text" placeholder="Name">
-      <input id="ac-title" type="text" placeholder="Title">
-      <input id="ac-phone" type="text" placeholder="Phone">
-      <input id="ac-email" type="text" placeholder="Email">
-    </div>
-    <label class="contact-verified-toggle"><input type="checkbox" id="ac-verified"> &#x2B50; Verified best contact</label>
-    <div style="display:flex;gap:4px;margin-top:4px">
-      <div class="add-contact-btn" id="ac-submit-btn" onclick="addEditContact()">+ Add Contact</div>
-      <div class="add-contact-btn" id="ac-cancel-btn" onclick="cancelEditContact()" style="display:none;border-color:var(--text-dim);color:var(--text-dim)">Cancel</div>
-    </div>
+    <div class="add-contact-btn" onclick="addNewContact()">+ Add Contact</div>
 
     <div class="edit-section-label">Call Notes Log</div>
     <div class="call-notes-log" id="edit-callnotes-log"></div>
@@ -417,8 +426,32 @@ html, body { height:100%; width:100%; overflow:hidden; background:var(--bg); col
 
     <div class="edit-btns">
       <div class="edit-btn danger" id="edit-delete">Delete</div>
+      <div class="edit-btn" onclick="openMergeModal()" style="border-color:var(--accent);color:var(--accent)">Merge</div>
       <div class="edit-btn" onclick="closeEditModal()">Cancel</div>
       <div class="edit-btn save" onclick="saveEdit()">Save</div>
+    </div>
+  </div>
+</div>
+
+<!-- Merge Modal -->
+<div class="edit-overlay" id="merge-modal">
+  <div class="merge-modal">
+    <h3 style="font-family:'Rajdhani',sans-serif;font-size:15px;color:var(--text-bright);margin-bottom:8px">Merge Accounts</h3>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--text-dim);margin-bottom:6px">Merging into: <span style="color:var(--text-bright)" id="merge-source-name"></span></div>
+    <input class="merge-search" id="merge-search" type="text" placeholder="Search for duplicate account...">
+    <div class="merge-results" id="merge-results"></div>
+    <div class="merge-preview" id="merge-preview">
+      <div class="merge-compare">
+        <div class="merge-col"><h4>Keep</h4><div id="merge-left"></div></div>
+        <div class="merge-col"><h4>Delete</h4><div id="merge-right"></div></div>
+      </div>
+      <div class="merge-keep-label">Resolve conflicting fields:</div>
+      <div id="merge-choices"></div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--text-dim);margin:6px 0">Contacts, call notes, and notes will be combined.</div>
+      <div class="edit-btns">
+        <div class="edit-btn" onclick="closeMergeModal()">Cancel</div>
+        <div class="edit-btn save" onclick="executeMerge()">Merge</div>
+      </div>
     </div>
   </div>
 </div>
@@ -817,11 +850,10 @@ window.saveEdit = function() {
   render();
 };
 
-window.closeEditModal = function() { document.getElementById('edit-modal').classList.remove('open'); editingIdx = null; window._editingContactIdx = null; };
+window.closeEditModal = function() { document.getElementById('edit-modal').classList.remove('open'); editingIdx = null; };
 
 window._editContacts = [];
 window._editCallNotes = [];
-window._editingContactIdx = null;
 
 function renderEditContacts() {
   const list = document.getElementById('edit-contacts-list');
@@ -829,70 +861,224 @@ function renderEditContacts() {
     list.innerHTML = '<div style="font-size:9px;color:var(--text-dim);font-style:italic;font-family:IBM Plex Mono,monospace;padding:4px">No contacts</div>';
     return;
   }
-  list.innerHTML = window._editContacts.map((c, i) => `<div class="edit-contact-item${window._editingContactIdx === i ? ' editing' : ''}">
-    ${c.verified ? '<span class="ec-verified">&#x2B50;</span>' : ''}
-    <span>${c.name || 'Unknown'}${c.title ? ' — ' + c.title : ''}${c.phone ? ' | ' + c.phone : ''}${c.email ? ' | ' + c.email : ''}</span>
-    <span class="ec-actions">
-      <span class="edit-contact" onclick="startEditContact(${i})" title="Edit">&#x270F;</span>
-      <span class="del-contact" onclick="deleteEditContact(${i})" title="Delete">&times;</span>
-    </span>
+  list.innerHTML = window._editContacts.map((c, i) => `<div class="ec-card">
+    <div class="ec-card-header">
+      <span class="ec-star ${c.verified ? 'active' : ''}" onclick="toggleContactVerified(${i})" title="${c.verified ? 'Remove verified' : 'Mark as verified best contact'}">&#x2B50;</span>
+      <span class="ec-name">${c.name || 'New Contact'}${c.verified ? ' <span style="color:#FFD700;font-size:9px;font-weight:400">(verified)</span>' : ''}</span>
+      <span class="ec-del" onclick="deleteEditContact(${i})" title="Remove contact">&times;</span>
+    </div>
+    <div class="ec-field"><label>Name</label><input value="${(c.name||'').replace(/"/g,'&quot;')}" onchange="updateContactField(${i},'name',this.value)"></div>
+    <div class="ec-field"><label>Title</label><input value="${(c.title||'').replace(/"/g,'&quot;')}" onchange="updateContactField(${i},'title',this.value)"></div>
+    <div class="ec-field"><label>Phone</label><input value="${(c.phone||'').replace(/"/g,'&quot;')}" onchange="updateContactField(${i},'phone',this.value)"></div>
+    <div class="ec-field"><label>Email</label><input value="${(c.email||'').replace(/"/g,'&quot;')}" onchange="updateContactField(${i},'email',this.value)"></div>
   </div>`).join('');
 }
 
-window.startEditContact = function(i) {
-  const c = window._editContacts[i];
-  document.getElementById('ac-name').value = c.name || '';
-  document.getElementById('ac-title').value = c.title || '';
-  document.getElementById('ac-phone').value = c.phone || '';
-  document.getElementById('ac-email').value = c.email || '';
-  document.getElementById('ac-verified').checked = !!c.verified;
-  window._editingContactIdx = i;
-  document.getElementById('ac-submit-btn').textContent = 'Update Contact';
-  document.getElementById('ac-cancel-btn').style.display = '';
-  renderEditContacts();
+window.updateContactField = function(i, field, value) {
+  if (window._editContacts[i]) {
+    window._editContacts[i][field] = value.trim();
+    if (field === 'name') {
+      const cards = document.querySelectorAll('.ec-card');
+      if (cards[i]) cards[i].querySelector('.ec-name').innerHTML = (value.trim() || 'New Contact') + (window._editContacts[i].verified ? ' <span style="color:#FFD700;font-size:9px;font-weight:400">(verified)</span>' : '');
+    }
+  }
 };
 
-window.cancelEditContact = function() {
-  window._editingContactIdx = null;
-  document.getElementById('ac-name').value = '';
-  document.getElementById('ac-title').value = '';
-  document.getElementById('ac-phone').value = '';
-  document.getElementById('ac-email').value = '';
-  document.getElementById('ac-verified').checked = false;
-  document.getElementById('ac-submit-btn').textContent = '+ Add Contact';
-  document.getElementById('ac-cancel-btn').style.display = 'none';
-  renderEditContacts();
+window.toggleContactVerified = function(i) {
+  if (window._editContacts[i]) {
+    window._editContacts[i].verified = !window._editContacts[i].verified;
+    renderEditContacts();
+  }
 };
 
 window.deleteEditContact = function(i) {
   window._editContacts.splice(i, 1);
-  if (window._editingContactIdx === i) cancelEditContact();
-  else if (window._editingContactIdx !== null && window._editingContactIdx > i) window._editingContactIdx--;
   renderEditContacts();
 };
 
-window.addEditContact = function() {
-  const name = document.getElementById('ac-name').value.trim();
-  const title = document.getElementById('ac-title').value.trim();
-  const phone = document.getElementById('ac-phone').value.trim();
-  const email = document.getElementById('ac-email').value.trim();
-  const verified = document.getElementById('ac-verified').checked;
-  if (!name) { alert('Contact name is required'); return; }
-  if (window._editingContactIdx !== null) {
-    const existing = window._editContacts[window._editingContactIdx];
-    window._editContacts[window._editingContactIdx] = { ...existing, name, title, phone, email, verified };
-    window._editingContactIdx = null;
-    document.getElementById('ac-submit-btn').textContent = '+ Add Contact';
-    document.getElementById('ac-cancel-btn').style.display = 'none';
-  } else {
-    window._editContacts.push({ name, title, phone, email, verified });
-  }
-  document.getElementById('ac-name').value = '';
-  document.getElementById('ac-title').value = '';
-  document.getElementById('ac-phone').value = '';
-  document.getElementById('ac-email').value = '';
-  document.getElementById('ac-verified').checked = false;
+window.addNewContact = function() {
+  window._editContacts.push({ name:'', title:'', phone:'', email:'', verified:false });
   renderEditContacts();
+  const list = document.getElementById('edit-contacts-list');
+  list.scrollTop = list.scrollHeight;
+  const cards = list.querySelectorAll('.ec-card');
+  if (cards.length > 0) cards[cards.length-1].querySelector('input').focus();
+};
+
+// ── Merge Accounts ──
+let mergeSourceIdx = null;
+let mergeTargetIdx = null;
+
+window.openMergeModal = function() {
+  mergeSourceIdx = editingIdx;
+  saveEdit();
+  const edits = loadEdits();
+  const customAccounts = [];
+  Object.keys(edits).forEach(k => { const e = edits[k]; if (e.isCustom && !e.deleted) customAccounts.push(e.data); });
+  const allData = [...RAW_DATA, ...customAccounts];
+  const d = allData[mergeSourceIdx];
+  const eff = getEffective(d);
+  document.getElementById('merge-source-name').textContent = eff.company + ' — ' + (eff.address || eff.city);
+  document.getElementById('merge-search').value = '';
+  document.getElementById('merge-results').innerHTML = '';
+  document.getElementById('merge-preview').style.display = 'none';
+  mergeTargetIdx = null;
+  document.getElementById('merge-modal').classList.add('open');
+  document.getElementById('merge-search').focus();
+};
+
+window.closeMergeModal = function() {
+  document.getElementById('merge-modal').classList.remove('open');
+  mergeSourceIdx = null;
+  mergeTargetIdx = null;
+};
+
+document.getElementById('merge-search').addEventListener('input', function() {
+  const q = this.value.trim().toLowerCase();
+  if (q.length < 2) { document.getElementById('merge-results').innerHTML = ''; return; }
+  const edits = loadEdits();
+  const customAccounts = [];
+  Object.keys(edits).forEach(k => { const e = edits[k]; if (e.isCustom && !e.deleted) customAccounts.push(e.data); });
+  const allData = [...RAW_DATA, ...customAccounts];
+  const results = [];
+  allData.forEach((d, i) => {
+    if (i === mergeSourceIdx) return;
+    const eff = getEffective(d);
+    if (eff.deleted) return;
+    if (eff.company.toLowerCase().includes(q) || (eff.address||'').toLowerCase().includes(q) || eff.city.toLowerCase().includes(q)) {
+      results.push({ idx:i, eff });
+    }
+  });
+  const html = results.slice(0,15).map(r => `<div class="merge-result-item" onclick="selectMergeTarget(${r.idx})">
+    <span class="mr-company">${r.eff.company}</span>
+    <span class="mr-detail">${r.eff.address || ''}, ${r.eff.city}, ${r.eff.state} &bull; ${r.eff.status} &bull; Grade ${r.eff.grade}</span>
+  </div>`).join('');
+  document.getElementById('merge-results').innerHTML = html || '<div style="padding:8px;font-size:10px;color:var(--text-dim);font-family:IBM Plex Mono,monospace">No matches</div>';
+});
+
+window.selectMergeTarget = function(idx) {
+  mergeTargetIdx = idx;
+  document.getElementById('merge-results').innerHTML = '';
+  document.getElementById('merge-search').value = '';
+
+  const edits = loadEdits();
+  const customAccounts = [];
+  Object.keys(edits).forEach(k => { const e = edits[k]; if (e.isCustom && !e.deleted) customAccounts.push(e.data); });
+  const allData = [...RAW_DATA, ...customAccounts];
+
+  const srcEff = getEffective(allData[mergeSourceIdx]);
+  const tgtEff = getEffective(allData[mergeTargetIdx]);
+
+  const renderCol = (eff) => `
+    <div class="mc-row"><strong>${eff.company}</strong></div>
+    <div class="mc-row">${eff.address || 'No address'}, ${eff.city}, ${eff.state}</div>
+    <div class="mc-row">${eff.status} | Grade ${eff.grade}</div>
+    <div class="mc-row">Rev: ${formatSales(eff.rev012)}</div>
+    <div class="mc-row">Contacts: ${(eff.contacts||[]).length}</div>
+    ${eff.note ? '<div class="mc-row">Note: ' + eff.note.substring(0,40) + (eff.note.length>40?'...':'') + '</div>' : ''}
+    ${eff.star ? '<div class="mc-row">&#x2B50; Starred</div>' : ''}
+  `;
+
+  document.getElementById('merge-left').innerHTML = renderCol(srcEff);
+  document.getElementById('merge-right').innerHTML = renderCol(tgtEff);
+
+  const fields = [
+    { key:'grade', label:'Grade', src:srcEff.grade, tgt:tgtEff.grade },
+    { key:'status', label:'Status', src:srcEff.status, tgt:tgtEff.status },
+    { key:'vertical', label:'Vertical', src:srcEff.vertical, tgt:tgtEff.vertical },
+    { key:'competitorInfo', label:'Competitor', src:srcEff.competitorInfo, tgt:tgtEff.competitorInfo },
+    { key:'lastVisited', label:'Visited', src:srcEff.lastVisited, tgt:tgtEff.lastVisited },
+  ];
+
+  let choicesHTML = '';
+  fields.forEach(f => {
+    if (f.src && f.tgt && f.src !== f.tgt) {
+      choicesHTML += `<div class="merge-keep-row">
+        <strong style="min-width:60px">${f.label}:</strong>
+        <label><input type="radio" name="merge-${f.key}" value="src" checked> ${f.src}</label>
+        <label><input type="radio" name="merge-${f.key}" value="tgt"> ${f.tgt}</label>
+      </div>`;
+    }
+  });
+  document.getElementById('merge-choices').innerHTML = choicesHTML || '<div style="font-size:9px;color:var(--text-dim);font-family:IBM Plex Mono,monospace">No conflicts.</div>';
+
+  document.getElementById('merge-preview').style.display = 'block';
+};
+
+window.executeMerge = function() {
+  if (mergeSourceIdx === null || mergeTargetIdx === null) return;
+  if (!confirm('Merge these accounts? The duplicate will be deleted.')) return;
+
+  const edits = loadEdits();
+  const customAccounts = [];
+  Object.keys(edits).forEach(k => { const e = edits[k]; if (e.isCustom && !e.deleted) customAccounts.push(e.data); });
+  const allData = [...RAW_DATA, ...customAccounts];
+
+  const srcData = allData[mergeSourceIdx];
+  const tgtData = allData[mergeTargetIdx];
+  const srcEff = getEffective(srcData);
+  const tgtEff = getEffective(tgtData);
+  const srcKey = getEditKey(srcData);
+  const tgtKey = getEditKey(tgtData);
+  const srcEdits = edits[srcKey] || {};
+  const tgtEdits = edits[tgtKey] || {};
+
+  const srcContacts = srcEdits.contacts || srcData.contacts || [];
+  const tgtContacts = tgtEdits.contacts || tgtData.contacts || [];
+  const contactNames = new Set(srcContacts.map(c => (c.name||'').toLowerCase()));
+  const mergedContacts = [...srcContacts];
+  tgtContacts.forEach(c => {
+    if (!contactNames.has((c.name||'').toLowerCase())) {
+      mergedContacts.push(c);
+      contactNames.add((c.name||'').toLowerCase());
+    }
+  });
+
+  const srcNotes = srcEdits.callNotes || [];
+  const tgtNotes = tgtEdits.callNotes || [];
+  const mergedCallNotes = [...srcNotes, ...tgtNotes].sort((a,b) => new Date(b.ts) - new Date(a.ts));
+
+  let mergedNote = srcEff.note || '';
+  if (tgtEff.note && tgtEff.note !== mergedNote) {
+    mergedNote = mergedNote ? mergedNote + '\n[Merged from ' + tgtEff.company + '] ' + tgtEff.note : tgtEff.note;
+  }
+
+  const mergedStar = srcEff.star || tgtEff.star;
+  const mergedRing = srcEff.ring || tgtEff.ring;
+
+  const resolveField = (key, srcVal, tgtVal) => {
+    const radio = document.querySelector(`input[name="merge-${key}"]:checked`);
+    if (radio && radio.value === 'tgt') return tgtVal;
+    return srcVal || tgtVal;
+  };
+
+  const mergedGrade = resolveField('grade', srcEdits.grade, tgtEdits.grade || tgtData.grade);
+  const mergedStatus = resolveField('status', srcEdits.status, tgtEdits.status || tgtData.status);
+  const mergedVertical = resolveField('vertical', srcEdits.vertical, tgtEdits.vertical);
+  const mergedCompetitor = resolveField('competitorInfo', srcEdits.competitorInfo, tgtEdits.competitorInfo);
+  const mergedLastVisited = resolveField('lastVisited', srcEdits.lastVisited, tgtEdits.lastVisited);
+
+  edits[srcKey] = {
+    ...srcEdits,
+    star: mergedStar,
+    ring: mergedRing,
+    note: mergedNote,
+    contacts: mergedContacts,
+    callNotes: mergedCallNotes,
+    companyName: srcEdits.companyName || null,
+    address: srcEdits.address || null,
+    vertical: mergedVertical || null,
+    lastVisited: mergedLastVisited || null,
+    competitorInfo: mergedCompetitor || null,
+  };
+  if (mergedGrade) edits[srcKey].grade = mergedGrade;
+  if (mergedStatus) edits[srcKey].status = mergedStatus;
+
+  edits[tgtKey] = { ...(edits[tgtKey] || {}), deleted: true };
+
+  saveEdits(edits);
+  closeMergeModal();
+  render();
 };
 
 function renderCallNotes() {
